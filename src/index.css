@@ -1,0 +1,60 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+/* Custom scrollbar */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 100px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Range slider styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none;
+  border-radius: 100px;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+  border: 2px solid rgba(34, 211, 238, 0.6);
+  transition: box-shadow 0.2s, transform 0.15s;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 20px rgba(34, 211, 238, 0.7), 0 2px 12px rgba(0, 0, 0, 0.5);
+  transform: scale(1.15);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+  border: 2px solid rgba(34, 211, 238, 0.6);
+}
+
+/* Selection */
+::selection {
+  background: rgba(34, 211, 238, 0.3);
+  color: white;
+}
