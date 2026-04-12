@@ -1,5 +1,6 @@
 {
   "name": "react-example",
+  "homepage": "https://lemonquake.github.io/hook-champions/",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,7 +10,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "party": "partykit dev party/server.ts"
+    "party": "partykit dev party/server.ts",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -41,6 +44,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.21",
+    "gh-pages": "^6.3.0",
     "partykit": "^0.0.115",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
