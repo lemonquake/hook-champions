@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import confetti from 'canvas-confetti';
 import PartySocket from 'partysocket';
 
 export interface EnemyData {
@@ -36,7 +35,7 @@ export interface TeamConfig {
   basePosition: [number, number, number];
 }
 
-export type MapTheme = 'Cyber' | 'Jungle' | 'Snow' | 'City';
+export type MapDesign = 'The Pit' | 'Crossfire' | 'Highrise' | 'Fortress' | 'Orbital' | 'Volcano';
 
 export type HookTipType = 'shuriken' | 'anchor' | 'scythe' | 'trident' | 'harpoon' | 'dagger' | 'claw' | 'drill' | 'star' | 'arrow' | 'crescent' | 'sawblade' | 'kunai' | 'golden_dragon' | 'plasma_caster' | 'void_shard';
 export type ChainLinkType = 'torus' | 'box' | 'cylinder' | 'ring' | 'chainmail' | 'dna' | 'hex' | 'spike' | 'skull' | 'crystal' | 'gear' | 'orb' | 'diamond';
@@ -71,7 +70,7 @@ interface GameState {
 
   enemies: Record<string, EnemyData>;
   teams: TeamConfig[];
-  mapConfig: { seed: number; density: number; size: number; theme: MapTheme };
+  mapConfig: { seed: number; density: number; size: number; theme: MapDesign; startPoints: number };
   peers: Record<string, PeerData>;
   
   setStats: (stats: Partial<GameState>) => void;
@@ -90,9 +89,24 @@ interface GameState {
   hookPenalties: Record<string, number>; // entityId -> penalty timestamp
   applyHookPenalty: (entityId: string) => void;
   
+  // Maim debuff system (pushing hook)
+  maimDebuffs: Record<string, number>; // entityId -> expiry timestamp
+  applyMaim: (entityId: string) => void;
+  isMaimed: (entityId: string) => boolean;
+  pushHookCooldown: number; // remaining seconds for UI
+  
+  // Push kill credit system
+  lastPushedBy: Record<string, { attackerId: string; time: number }>;
+  applyPushCredit: (targetId: string, attackerId: string) => void;
+  
+  // Kill feed effects (celebration effects for the killer)
+  killFeedEffects: { id: string; variant: number; victimName: string; time: number }[];
+  spawnKillEffect: (victimName: string) => void;
+  removeKillEffect: (id: string) => void;
+  
   // Effects System
-  effects: { id: string; type: 'impact' | 'dust'; position: [number, number, number]; color: string; time: number }[];
-  spawnEffect: (type: 'impact' | 'dust', position: [number, number, number], color: string) => void;
+  effects: { id: string; type: 'impact' | 'dust' | 'blood_explosion'; position: [number, number, number]; color: string; time: number }[];
+  spawnEffect: (type: 'impact' | 'dust' | 'blood_explosion', position: [number, number, number], color: string) => void;
   removeEffect: (id: string) => void;
 }
 
@@ -129,13 +143,51 @@ export const useGameStore = create<GameState>((set, get) => ({
     { id: 1, color: '#22d3ee', playerCount: 1, aiCount: 0, basePosition: [-20, 0, -20] },
     { id: 2, color: '#ff3333', playerCount: 0, aiCount: 3, basePosition: [20, 0, 20] },
   ],
-  mapConfig: { seed: Math.random(), density: 0.15, size: 60, theme: 'Cyber' },
+  mapConfig: { seed: Math.random(), density: 0.15, size: 60, theme: 'The Pit', startPoints: 50000 },
   peers: {},
   hookPenalties: {},
+  maimDebuffs: {},
+  pushHookCooldown: 0,
+  lastPushedBy: {},
+  killFeedEffects: [],
   effects: [],
   
   applyHookPenalty: (entityId) => set((state) => ({
     hookPenalties: { ...state.hookPenalties, [entityId]: performance.now() / 1000 }
+  })),
+  
+  applyMaim: (entityId) => set((state) => ({
+    maimDebuffs: { ...state.maimDebuffs, [entityId]: performance.now() / 1000 + 0.5 }
+  })),
+  
+  isMaimed: (entityId) => {
+    const expiry = get().maimDebuffs[entityId];
+    if (!expiry) return false;
+    return performance.now() / 1000 < expiry;
+  },
+  
+  applyPushCredit: (targetId, attackerId) => set((state) => {
+    const existing = state.lastPushedBy[targetId];
+    const now = performance.now() / 1000;
+    if (existing && (now - existing.time) < 15) {
+      return state; // Register the first caster by skipping override
+    }
+    return {
+      lastPushedBy: { ...state.lastPushedBy, [targetId]: { attackerId, time: now } }
+    };
+  }),
+  
+  spawnKillEffect: (victimName) => set((state) => ({
+    killFeedEffects: [...state.killFeedEffects, { 
+      id: Math.random().toString(), 
+      variant: Math.floor(Math.random() * 10), 
+      victimName, 
+      time: performance.now() 
+    }]
+  })),
+  
+  removeKillEffect: (id) => set((state) => ({
+    killFeedEffects: state.killFeedEffects.filter(e => e.id !== id)
   })),
   
   spawnEffect: (type, position, color) => set((state) => ({
@@ -152,17 +204,17 @@ export const useGameStore = create<GameState>((set, get) => ({
     const enemy = state.enemies[id];
     if (!enemy || enemy.status === 'dead') return state;
     
+    // Check push credit — if killed by hazard, credit the pusher
+    let effectiveAttacker = attackerId;
+    if (attackerId === 'hazard') {
+      const pushCredit = state.lastPushedBy[id];
+      if (pushCredit && (performance.now() / 1000 - pushCredit.time) < 15) {
+        effectiveAttacker = pushCredit.attackerId;
+      }
+    }
+    
     const newHp = enemy.hp - amount;
     if (newHp <= 0) {
-      confetti({
-        particleCount: 150,
-        spread: 100,
-        origin: { y: 0.6 },
-        colors: ['#ff0000', '#ffaa00', '#ffff00', '#00ffff', '#ff00ff'],
-        zIndex: 9999,
-        startVelocity: 45
-      });
-      
       const updates: Partial<GameState> = {
         enemies: {
           ...state.enemies,
@@ -170,7 +222,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         }
       };
       
-      if (attackerId === 'player') {
+      if (effectiveAttacker === 'player') {
         updates.kills = state.kills + 1;
         let pointsGain = 100;
         if (state.augments.includes('bounty_hunter')) pointsGain *= 1.5;
@@ -178,15 +230,28 @@ export const useGameStore = create<GameState>((set, get) => ({
         if (state.augments.includes('vampire_protocol') && state.hp < state.maxHp) {
           updates.hp = Math.min(state.maxHp, state.hp + 25);
         }
-      } else if (state.enemies[attackerId]) {
+        // Spawn kill celebration effect
+        updates.killFeedEffects = [...(state.killFeedEffects || []), {
+          id: Math.random().toString(),
+          variant: Math.floor(Math.random() * 10),
+          victimName: enemy.name,
+          time: performance.now()
+        }];
+      } else if (state.enemies[effectiveAttacker]) {
         updates.enemies = {
           ...updates.enemies,
-          [attackerId]: {
-            ...state.enemies[attackerId],
-            kills: state.enemies[attackerId].kills + 1
+          [effectiveAttacker]: {
+            ...state.enemies[effectiveAttacker],
+            kills: state.enemies[effectiveAttacker].kills + 1
           }
         };
       }
+      
+      // Clean up push credit
+      const newPushCredits = { ...state.lastPushedBy };
+      delete newPushCredits[id];
+      updates.lastPushedBy = newPushCredits;
+      
       return updates;
     }
     
@@ -201,6 +266,15 @@ export const useGameStore = create<GameState>((set, get) => ({
   damagePlayer: (amount, attackerId) => set((state) => {
     if (state.status === 'dead') return state;
     
+    // Check push credit — if killed by hazard, credit the pusher
+    let effectiveAttacker = attackerId;
+    if (attackerId === 'hazard') {
+      const pushCredit = state.lastPushedBy['player'];
+      if (pushCredit && (performance.now() / 1000 - pushCredit.time) < 15) {
+        effectiveAttacker = pushCredit.attackerId;
+      }
+    }
+    
     let finalDamage = amount;
     if (state.augments.includes('titanium_armor')) {
       finalDamage *= 0.8;
@@ -214,15 +288,21 @@ export const useGameStore = create<GameState>((set, get) => ({
         deaths: state.deaths + 1
       };
       
-      if (attackerId !== 'player' && state.enemies[attackerId]) {
+      if (effectiveAttacker !== 'player' && effectiveAttacker !== 'hazard' && state.enemies[effectiveAttacker]) {
         updates.enemies = {
           ...state.enemies,
-          [attackerId]: {
-            ...state.enemies[attackerId],
-            kills: state.enemies[attackerId].kills + 1
+          [effectiveAttacker]: {
+            ...state.enemies[effectiveAttacker],
+            kills: state.enemies[effectiveAttacker].kills + 1
           }
         };
       }
+      
+      // Clean up push credit
+      const newPushCredits = { ...state.lastPushedBy };
+      delete newPushCredits['player'];
+      updates.lastPushedBy = newPushCredits;
+      
       return updates;
     }
     return { hp: newHp };
@@ -354,7 +434,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       deaths: 0,
       shotsFired: 0,
       shotsHit: 0,
-      points: 50000,
+      points: get().mapConfig.startPoints,
       playerPosition: playerTeam ? [playerTeam.basePosition[0], 5, playerTeam.basePosition[2]] : [0, 5, 0]
     });
   },

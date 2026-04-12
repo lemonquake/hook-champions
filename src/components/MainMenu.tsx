@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useGameStore, MapTheme } from '../store';
+import { useGameStore, MapDesign } from '../store';
 import { motion, AnimatePresence } from 'motion/react';
 import { Users, Map, Swords, ChevronDown, ChevronUp, Sparkles, Plus, Minus, Shuffle, Play, User, Bot, Crosshair, Shield, Zap, Anchor } from 'lucide-react';
 
@@ -97,40 +97,57 @@ const CounterButton = ({ value, onChange, min = 0, max = 4, label, icon: Icon }:
 );
 
 // ─── Theme Data ─────────────────────────────────────────────
-const themeData: Record<MapTheme, { emoji: string; gradient: string; accent: string; bgPreview: string; description: string; darkText: boolean }> = {
-  Cyber: {
-    emoji: '🌃',
-    gradient: 'from-cyan-500 to-blue-600',
-    accent: 'rgba(34,211,238,0.5)',
-    bgPreview: 'linear-gradient(135deg, #0a0a1a 0%, #0d1a2e 50%, #091428 100%)',
-    description: 'Neon-lit digital arena',
+const mapData: Record<MapDesign, { emoji: string; gradient: string; accent: string; bgPreview: string; description: string; darkText: boolean }> = {
+  'The Pit': {
+    emoji: '⚔️',
+    gradient: 'from-orange-500 to-red-600',
+    accent: 'rgba(239,68,68,0.5)',
+    bgPreview: 'linear-gradient(135deg, #1a0f0a 0%, #2e0d0d 50%, #280909 100%)',
+    description: 'Elevated bases sloping down into a dense central arena',
     darkText: false,
   },
-  Jungle: {
-    emoji: '🌿',
-    gradient: 'from-emerald-500 to-green-600',
-    accent: 'rgba(34,197,94,0.5)',
-    bgPreview: 'linear-gradient(135deg, #0a1a0a 0%, #0d2e1a 50%, #091e14 100%)',
+  'Crossfire': {
+    emoji: '🌉',
+    gradient: 'from-blue-500 to-indigo-600',
+    accent: 'rgba(99,102,241,0.5)',
+    bgPreview: 'linear-gradient(135deg, #0a1128 0%, #0a1930 50%, #050a1f 100%)',
+    description: 'Elevated corner islands connected by crossing bridges',
     darkText: false,
-    description: 'Dense tropical battleground',
   },
-  Snow: {
-    emoji: '❄️',
-    gradient: 'from-slate-300 to-sky-400',
-    accent: 'rgba(148,163,184,0.5)',
-    bgPreview: 'linear-gradient(135deg, #e2e8f0 0%, #93c5fd 50%, #bfdbfe 100%)',
-    description: 'Frozen tundra warfare',
-    darkText: true,
-  },
-  City: {
+  'Highrise': {
     emoji: '🏙️',
-    gradient: 'from-orange-400 to-rose-500',
-    accent: 'rgba(251,146,60,0.5)',
-    bgPreview: 'linear-gradient(135deg, #0a0a14 0%, #1a0d0d 50%, #14091e 100%)',
-    description: 'Urban combat zone',
+    gradient: 'from-cyan-300 to-sky-500',
+    accent: 'rgba(56,189,248,0.5)',
+    bgPreview: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)',
+    description: 'A towering central structure surrounded by lower elevated platforms',
+    darkText: false,
+  },
+  'Fortress': {
+    emoji: '🏰',
+    gradient: 'from-emerald-600 to-teal-800',
+    accent: 'rgba(20,184,166,0.5)',
+    bgPreview: 'linear-gradient(135deg, #061a14 0%, #0f3028 50%, #091e14 100%)',
+    description: 'Thick defensive walls and narrow choke points guiding into the center',
+    darkText: false,
+  },
+  'Orbital': {
+    emoji: '🪐',
+    gradient: 'from-fuchsia-500 to-purple-600',
+    accent: 'rgba(217,70,239,0.5)',
+    bgPreview: 'linear-gradient(135deg, #180524 0%, #290a3d 50%, #150221 100%)',
+    description: 'A suspended zero-G array with rotating metallic gyroscopes',
+    darkText: false,
+  },
+  'Volcano': {
+    emoji: '🌋',
+    gradient: 'from-red-600 to-yellow-500',
+    accent: 'rgba(239,68,68,0.5)',
+    bgPreview: 'linear-gradient(135deg, #260707 0%, #3d140a 50%, #1a0404 100%)',
+    description: 'A treacherous central peak surrounded by rivers of flowing magma',
     darkText: false,
   },
 };
+
 
 const teamColors = ['#22d3ee', '#ff3333', '#33ff33', '#ffff33'];
 
@@ -157,7 +174,7 @@ export const MainMenu: React.FC = () => {
     setStats({ teams: newTeams });
   }, [teams, setStats]);
 
-  const updateMap = useCallback((field: 'density' | 'size' | 'theme', value: any) => {
+  const updateMap = useCallback((field: 'density' | 'size' | 'theme' | 'startPoints', value: any) => {
     setStats({ mapConfig: { ...mapConfig, [field]: value } });
   }, [mapConfig, setStats]);
 
@@ -179,12 +196,13 @@ export const MainMenu: React.FC = () => {
 
   const totalPlayers = teams.reduce((sum, t) => sum + t.playerCount + t.aiCount, 0);
 
-  const themes: MapTheme[] = ['Cyber', 'Jungle', 'Snow', 'City'];
+  const mapDesigns: MapDesign[] = ['The Pit', 'Crossfire', 'Highrise', 'Fortress', 'Orbital', 'Volcano'];
 
   return (
     <div className="absolute inset-0 z-50 flex flex-col items-center bg-[#050510] text-white overflow-hidden select-none"
       style={{ fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif" }}
     >
+      <div className="animate-scanline" />
       <BackgroundParticles />
       <GridBackground />
 
@@ -201,12 +219,11 @@ export const MainMenu: React.FC = () => {
           transition={{ duration: 0.6 }}
           className="text-center mb-4"
         >
-          <h1 className="text-5xl font-black tracking-tight"
+          <h1 className="text-5xl font-black tracking-tight glitch-hover neon-text-cyan"
             style={{
               background: 'linear-gradient(135deg, #22d3ee 0%, #3b82f6 40%, #a855f7 100%)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
-              filter: 'drop-shadow(0 0 30px rgba(34,211,238,0.3))',
             }}
           >
             CHAIN HOOK ARENA
@@ -219,10 +236,10 @@ export const MainMenu: React.FC = () => {
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.3, duration: 0.4 }}
-          whileHover={{ scale: 1.03, y: -1 }}
-          whileTap={{ scale: 0.97 }}
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
           onClick={startGame}
-          className="relative group w-full max-w-md py-4 px-8 rounded-2xl font-black text-lg tracking-widest uppercase overflow-hidden border border-cyan-400/30 cursor-pointer"
+          className="sci-fi-button relative group w-full max-w-md py-4 px-8 font-black text-lg tracking-widest uppercase overflow-hidden hologram-card cursor-pointer"
           style={{
             background: 'linear-gradient(135deg, rgba(34,211,238,0.2) 0%, rgba(59,130,246,0.2) 100%)',
           }}
@@ -243,7 +260,7 @@ export const MainMenu: React.FC = () => {
             transition={{ duration: 3, repeat: Infinity, ease: 'linear' }}
           />
           {/* Border glow */}
-          <div className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
             style={{
               boxShadow: '0 0 30px rgba(34,211,238,0.3), inset 0 0 30px rgba(34,211,238,0.1)',
             }}
@@ -299,7 +316,7 @@ export const MainMenu: React.FC = () => {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.1 }}
-                className="mb-6 p-5 rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm"
+                className="mb-6 p-5 sci-fi-panel hologram-card"
               >
                 <div className="flex items-center gap-3 mb-4">
                   <div className="p-2 rounded-xl bg-gradient-to-br from-cyan-500/20 to-blue-500/10 border border-cyan-500/20">
@@ -330,9 +347,9 @@ export const MainMenu: React.FC = () => {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.15 + index * 0.08 }}
-                    className="relative group rounded-2xl border bg-white/[0.02] backdrop-blur-sm overflow-hidden"
+                    className="relative group sci-fi-panel overflow-hidden transition-all hover:border-white/30"
                     style={{
-                      borderColor: `${team.color}20`,
+                      borderColor: `${team.color}40`,
                     }}
                   >
                     {/* Team color accent strip */}
@@ -421,12 +438,12 @@ export const MainMenu: React.FC = () => {
             >
               <SectionHeader icon={Map} title="ARENA GENERATION" subtitle="Customize the battlefield" />
 
-              {/* Theme Selector */}
+              {/* Map Selector */}
               <div className="mb-6">
-                <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">SELECT THEME</div>
+                <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">SELECT MAP DESIGN</div>
                 <div className="grid grid-cols-2 gap-3">
-                  {themes.map((t, i) => {
-                    const data = themeData[t];
+                  {mapDesigns.map((t, i) => {
+                    const data = mapData[t];
                     const isSelected = mapConfig.theme === t;
                     return (
                       <motion.button
@@ -437,10 +454,10 @@ export const MainMenu: React.FC = () => {
                         whileHover={{ scale: 1.02, y: -2 }}
                         whileTap={{ scale: 0.98 }}
                         onClick={() => updateMap('theme', t)}
-                        className={`relative overflow-hidden rounded-2xl p-4 text-left transition-all duration-300 cursor-pointer border ${
+                        className={`relative overflow-hidden sci-fi-button p-4 text-left transition-all duration-300 cursor-pointer border ${
                           isSelected
-                            ? 'border-white/20 shadow-xl'
-                            : 'border-white/[0.06] hover:border-white/15'
+                            ? 'border-cyan-400 shadow-[0_0_20px_rgba(34,211,238,0.4)]'
+                            : 'border-white/[0.06] hover:border-white/30 hologram-card'
                         }`}
                         style={{
                           background: data.bgPreview,
@@ -481,7 +498,7 @@ export const MainMenu: React.FC = () => {
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.3 }}
-                className="mb-5 p-5 rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm"
+                className="mb-5 p-5 sci-fi-panel"
               >
                 <div className="flex items-center justify-between mb-3">
                   <div>
@@ -516,7 +533,7 @@ export const MainMenu: React.FC = () => {
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.35 }}
-                className="mb-5 p-5 rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm"
+                className="mb-5 p-5 sci-fi-panel"
               >
                 <div className="flex items-center justify-between mb-3">
                   <div>
@@ -543,6 +560,41 @@ export const MainMenu: React.FC = () => {
                   <span>5%</span>
                   <span>SPARSE ← → DENSE</span>
                   <span>35%</span>
+                </div>
+              </motion.div>
+
+              {/* Starting Gold */}
+              <motion.div
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.38 }}
+                className="mb-5 p-5 sci-fi-panel"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className="text-sm font-bold text-white">Starting Gold</div>
+                    <div className="text-[11px] text-gray-500">Grant combatants early upgrade advantages</div>
+                  </div>
+                  <div className="text-lg font-black text-yellow-400 tabular-nums px-3 py-1 rounded-lg bg-yellow-400/10 border border-yellow-400/20">
+                    {mapConfig.startPoints.toLocaleString()}
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="200000"
+                  step="5000"
+                  value={mapConfig.startPoints}
+                  onChange={(e) => updateMap('startPoints', parseInt(e.target.value))}
+                  className="w-full h-2 rounded-full appearance-none cursor-pointer"
+                  style={{
+                    background: `linear-gradient(to right, #eab308 ${(mapConfig.startPoints / 200000) * 100}%, rgba(255,255,255,0.08) ${(mapConfig.startPoints / 200000) * 100}%)`,
+                  }}
+                />
+                <div className="flex justify-between mt-1.5 text-[10px] text-gray-600 font-medium">
+                  <span>0</span>
+                  <span>POOR ← → WEALTHY</span>
+                  <span>200,000</span>
                 </div>
               </motion.div>
 

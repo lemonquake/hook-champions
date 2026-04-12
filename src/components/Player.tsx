@@ -8,6 +8,8 @@ import { CharacterModel, CharacterActionState } from './CharacterModel';
 
 const HOOK_COOLDOWN = 2; // seconds
 const HOOK_DAMAGE = 50;
+const PUSH_HOOK_COOLDOWN = 2; // seconds
+const PUSH_FORCE = 30; // violently push them away!
 
 // Pre-allocated memory for zero-allocation chain rendering
 const chainDummy = new THREE.Object3D();
@@ -18,11 +20,24 @@ const chainPos = new THREE.Vector3();
 const chainTangent = new THREE.Vector3();
 const chainAxis = new THREE.Vector3();
 
+// Push hook chain (separate pre-allocated)
+const pushChainDummy = new THREE.Object3D();
+const pushChainMidPoint = new THREE.Vector3();
+const pushChainCurve = new THREE.QuadraticBezierCurve3();
+const pushChainPos = new THREE.Vector3();
+const pushChainTangent = new THREE.Vector3();
+const pushChainAxis = new THREE.Vector3();
+
 export const Player: React.FC = () => {
   const playerRef = useRef<RapierRigidBody>(null);
   const hookRef = useRef<RapierRigidBody>(null);
   const chainInstancedMesh = useRef<THREE.InstancedMesh>(null);
   const hookTipRef = useRef<THREE.Group>(null);
+  
+  // Push hook refs
+  const pushHookRef = useRef<RapierRigidBody>(null);
+  const pushChainInstancedMesh = useRef<THREE.InstancedMesh>(null);
+  const pushHookTipRef = useRef<THREE.Group>(null);
   
   const [, getKeys] = useKeyboardControls();
   const { camera, scene } = useThree();
@@ -49,6 +64,11 @@ export const Player: React.FC = () => {
     status: 'idle' as 'idle' | 'firing' | 'retracting',
     attachedEnemy: null as string | null,
     attachedEnemyHandle: null as number | null,
+    lastFireTime: 0,
+  });
+
+  const pushHookState = useRef({
+    status: 'idle' as 'idle' | 'firing' | 'retracting',
     lastFireTime: 0,
   });
 
@@ -81,6 +101,16 @@ export const Player: React.FC = () => {
     emissiveIntensity: 0.8
   }));
 
+  // Push hook chain material — distinct magenta/purple color
+  const pushChainGeo = useMemo(() => new THREE.OctahedronGeometry(0.12), []);
+  const [pushChainMat] = useState(() => new THREE.MeshStandardMaterial({ 
+    color: '#d946ef', 
+    metalness: 1, 
+    roughness: 0.15,
+    emissive: '#a855f7',
+    emissiveIntensity: 1.2
+  }));
+
   const teamColor = useGameStore(state => state.teams.find(t => t.id === playerTeamId)?.color || '#22d3ee');
 
   // Mouse Look
@@ -99,7 +129,46 @@ export const Player: React.FC = () => {
 
 
 
-  // Fire Hook
+  // Helper: compute aim target from crosshair
+  const getAimData = () => {
+    if (!playerRef.current) return null;
+    const playerPos = playerRef.current.translation();
+    
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    
+    const rayOrigin = raycaster.ray.origin;
+    const rayDir = raycaster.ray.direction;
+    
+    const rapierRay = new rapier.Ray(rayOrigin, rayDir);
+    const hit = world.castRay(rapierRay, 300, true, interactionGroups(1, [0, 1]));
+    
+    let targetPoint;
+    if (hit) {
+      const rawHit = hit as any;
+      const distance = typeof rawHit.timeOfImpact === 'number' ? rawHit.timeOfImpact : 
+                     (typeof rawHit.toi === 'function' ? rawHit.toi() : rawHit.toi);
+                     
+      if (distance !== undefined && !isNaN(distance)) {
+        targetPoint = raycaster.ray.at(distance, new THREE.Vector3());
+      } else {
+        targetPoint = raycaster.ray.origin.clone().add(raycaster.ray.direction.multiplyScalar(200));
+      }
+    } else {
+      targetPoint = raycaster.ray.origin.clone().add(raycaster.ray.direction.multiplyScalar(200));
+    }
+
+    const visualOrigin = new THREE.Vector3(playerPos.x, playerPos.y + 1.0, playerPos.z);
+    let aimDir = targetPoint.clone().sub(visualOrigin).normalize();
+    if (aimDir.lengthSq() < 0.1 || isNaN(aimDir.x)) {
+      aimDir = raycaster.ray.direction.clone().normalize();
+    }
+    const origin = visualOrigin.add(aimDir.clone().multiplyScalar(0.75));
+    
+    return { origin, aimDir };
+  };
+
+  // Fire Hook (Left Click) & Push Hook (Right Click)
   useEffect(() => {
     const handleMouseDown = (e: MouseEvent) => {
       if (!document.pointerLockElement) {
@@ -107,89 +176,86 @@ export const Player: React.FC = () => {
         return;
       }
       
-      if (e.button !== 0) return; // Only left click
-      
       const { status } = useGameStore.getState();
       if (status === 'dead') return;
       
       const now = performance.now() / 1000;
-      // Check for hook penalty (snagged by another unit)
-      const hookPenalty = useGameStore.getState().hookPenalties['player'] || 0;
-      const penaltyCooldownRemaining = Math.max(0, HOOK_COOLDOWN - (now - hookPenalty));
-      if (
-        hookState.current.status === 'idle' && 
-        now - hookState.current.lastFireTime > HOOK_COOLDOWN &&
-        penaltyCooldownRemaining <= 0 &&
-        playerRef.current && 
-        playerRef.current.bodyType() !== rapier.RigidBodyType.KinematicPositionBased &&
-        hookRef.current
-      ) {
-        hookState.current.lastFireTime = now; // Track fire time for in-flight timeout
-        hookState.current.status = 'firing';
-        hookState.current.attachedEnemy = null; // FIX LEAK: Clear previous target
-        hookState.current.attachedEnemyHandle = null;
-        
-        useGameStore.getState().recordShot('player', false); // Record shot fired
-        
-        const playerPos = playerRef.current.translation();
-        
-        // Raycast from exact screen center (where crosshair is) into the world
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-        
-        const rayOrigin = raycaster.ray.origin;
-        const rayDir = raycaster.ray.direction;
-        
-        // Use Rapier to find exact intersection with geometry (groups 0 and 1)
-        const rapierRay = new rapier.Ray(rayOrigin, rayDir);
-        const hit = world.castRay(rapierRay, 300, true, interactionGroups(1, [0, 1]));
-        
-        let targetPoint;
-        if (hit) {
-          const rawHit = hit as any;
-          const distance = typeof rawHit.timeOfImpact === 'number' ? rawHit.timeOfImpact : 
-                         (typeof rawHit.toi === 'function' ? rawHit.toi() : rawHit.toi);
-                         
-          if (distance !== undefined && !isNaN(distance)) {
-            targetPoint = raycaster.ray.at(distance, new THREE.Vector3());
-          } else {
-            targetPoint = raycaster.ray.origin.clone().add(raycaster.ray.direction.multiplyScalar(200));
+      const isBeingHooked = playerRef.current && playerRef.current.bodyType() === rapier.RigidBodyType.KinematicPositionBased;
+      
+      // === LEFT CLICK: Regular Hook ===
+      if (e.button === 0) {
+        const hookPenalty = useGameStore.getState().hookPenalties['player'] || 0;
+        const penaltyCooldownRemaining = Math.max(0, HOOK_COOLDOWN - (now - hookPenalty));
+        if (
+          hookState.current.status === 'idle' && 
+          now - hookState.current.lastFireTime > HOOK_COOLDOWN &&
+          penaltyCooldownRemaining <= 0 &&
+          playerRef.current && 
+          !isBeingHooked &&
+          hookRef.current
+        ) {
+          hookState.current.lastFireTime = now;
+          hookState.current.status = 'firing';
+          hookState.current.attachedEnemy = null;
+          hookState.current.attachedEnemyHandle = null;
+          
+          useGameStore.getState().recordShot('player', false);
+          
+          const aimData = getAimData();
+          if (aimData) {
+            const hookSpeed = useGameStore.getState().hookSpeed;
+            hookRef.current.setBodyType(rapier.RigidBodyType.Dynamic, true);
+            hookRef.current.setTranslation(aimData.origin, true);
+            hookRef.current.setLinvel(aimData.aimDir.multiplyScalar(hookSpeed), true);
           }
-        } else {
-          targetPoint = raycaster.ray.origin.clone().add(raycaster.ray.direction.multiplyScalar(200));
         }
-
-        // Calculate theoretical visual origin (chest level)
-        const visualOrigin = new THREE.Vector3(playerPos.x, playerPos.y + 1.0, playerPos.z);
-        
-        // Aim precisely towards the intersection
-        let aimDir = targetPoint.clone().sub(visualOrigin).normalize();
-        if (aimDir.lengthSq() < 0.1 || isNaN(aimDir.x)) {
-          aimDir = raycaster.ray.direction.clone().normalize();
+      }
+      
+      // === RIGHT CLICK: Push Hook ===
+      if (e.button === 2) {
+        if (
+          pushHookState.current.status === 'idle' && 
+          now - pushHookState.current.lastFireTime > PUSH_HOOK_COOLDOWN &&
+          playerRef.current && 
+          !isBeingHooked &&
+          pushHookRef.current
+        ) {
+          pushHookState.current.lastFireTime = now;
+          pushHookState.current.status = 'firing';
+          
+          const aimData = getAimData();
+          if (aimData) {
+            const hookSpeed = useGameStore.getState().hookSpeed;
+            pushHookRef.current.setBodyType(rapier.RigidBodyType.Dynamic, true);
+            pushHookRef.current.setTranslation(aimData.origin, true);
+            pushHookRef.current.setLinvel(aimData.aimDir.multiplyScalar(hookSpeed * 1.2), true);
+          }
         }
-        
-        // Spawn slightly ahead in the TRUE aim direction to cleanly exit the capsule player volume and prevent snagging self
-        const origin = visualOrigin.add(aimDir.clone().multiplyScalar(0.75));
-        
-        const hookSpeed = useGameStore.getState().hookSpeed;
-        
-        hookRef.current.setBodyType(rapier.RigidBodyType.Dynamic, true);
-        hookRef.current.setTranslation(origin, true);
-        hookRef.current.setLinvel(aimDir.multiplyScalar(hookSpeed), true);
       }
     };
     
+    // Prevent context menu on right click
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    
     document.addEventListener('mousedown', handleMouseDown);
-    return () => document.removeEventListener('mousedown', handleMouseDown);
+    document.addEventListener('contextmenu', handleContextMenu);
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('contextmenu', handleContextMenu);
+    };
   }, [camera, world, rapier]);
 
   useFrame((state, delta) => {
-    if (!playerRef.current || !hookRef.current) return;
+    if (!playerRef.current || !hookRef.current || !pushHookRef.current) return;
 
     useGameStore.getState().tickRespawn(delta);
 
     const storeState = useGameStore.getState();
     const { moveSpeed, status, hookSpeed, retractSpeed, maxHookLength } = storeState;
+    const playerMaimed = storeState.isMaimed('player');
+    const effectiveMoveSpeed = playerMaimed ? moveSpeed * 0.5 : moveSpeed;
     
     if (status === 'dead') {
       playerRef.current.setTranslation({ x: 0, y: -1000, z: 0 }, true);
@@ -226,7 +292,7 @@ export const Player: React.FC = () => {
 
     // Apply yaw to movement direction
     moveDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw.current);
-    moveDir.multiplyScalar(moveSpeed);
+    moveDir.multiplyScalar(effectiveMoveSpeed);
 
     const linVel = playerRef.current.linvel();
     velocityRef.current.set(moveDir.x, linVel.y, moveDir.z);
@@ -258,7 +324,7 @@ export const Player: React.FC = () => {
     let newVelocityY = linVel.y;
     const isBeingHooked = playerRef.current.bodyType() === rapier.RigidBodyType.KinematicPositionBased;
 
-    if (jump && !lastJumpPressed.current && !isBeingHooked) {
+    if (jump && !lastJumpPressed.current && !isBeingHooked && !playerMaimed) {
       if (isGrounded.current) {
         newVelocityY = 7;
         isGrounded.current = false;
@@ -271,9 +337,42 @@ export const Player: React.FC = () => {
     }
     lastJumpPressed.current = jump;
 
+    // --- Hazard & Pitfall Logic ---
+    let extraForceX = 0;
+    let extraForceZ = 0;
+    
+    if (storeState.mapConfig.theme === 'Volcano') {
+      if (myPos.y < -1.0 && status !== 'dead') {
+        // Lava DOT
+        useGameStore.getState().damagePlayer(50 * delta, 'hazard');
+      }
+    } else {
+      // Blades trap
+      if (myPos.y < -12 && status !== 'dead') {
+        useGameStore.getState().damagePlayer(9999, 'hazard'); // Instant death
+        useGameStore.getState().spawnEffect('blood_explosion', [myPos.x, -12, myPos.z], '#991b1b');
+      } else if (myPos.y < -2 && status !== 'dead' && !isGrounded.current) {
+        // "Suck in" vacuum mechanics to ensure they die when they fall
+        newVelocityY -= 30 * delta; // Extra brutal gravity pull
+        
+        // Pull inwards toward center of the blades
+        const inwardDir = new THREE.Vector3(-myPos.x, 0, -myPos.z).normalize();
+        extraForceX = inwardDir.x * 10;
+        extraForceZ = inwardDir.z * 10;
+      }
+    }
+
     // Keep current Y velocity for gravity/falling
     if (!isBeingHooked) {
-      playerRef.current.setLinvel({ x: moveDir.x, y: newVelocityY, z: moveDir.z }, true);
+      if (playerMaimed) {
+        const currentVel = playerRef.current.linvel();
+        const drag = isGrounded.current ? 30 * delta : 10 * delta;
+        const newVelX = Math.abs(currentVel.x) > drag ? currentVel.x - Math.sign(currentVel.x)*drag : 0;
+        const newVelZ = Math.abs(currentVel.z) > drag ? currentVel.z - Math.sign(currentVel.z)*drag : 0;
+        playerRef.current.setLinvel({ x: newVelX + extraForceX, y: newVelocityY, z: newVelZ + extraForceZ }, true);
+      } else {
+        playerRef.current.setLinvel({ x: moveDir.x + extraForceX, y: newVelocityY, z: moveDir.z + extraForceZ }, true);
+      }
     } else {
       velocityRef.current.set(0, 0, 0);
     }
@@ -368,8 +467,15 @@ export const Player: React.FC = () => {
     const cooldownFromFire = Math.max(0, HOOK_COOLDOWN - (now - hookState.current.lastFireTime));
     const cooldownFromPenalty = Math.max(0, HOOK_COOLDOWN - (now - hookPenalty));
     const cooldownRemaining = Math.max(cooldownFromFire, cooldownFromPenalty);
+    
+    // Push hook cooldown
+    const pushCooldownRemaining = pushHookState.current.status === 'idle' 
+      ? Math.max(0, PUSH_HOOK_COOLDOWN - (now - pushHookState.current.lastFireTime))
+      : PUSH_HOOK_COOLDOWN; // While active, show full cooldown
+    
     useGameStore.getState().setStats({ 
       cooldown: cooldownRemaining,
+      pushHookCooldown: pushCooldownRemaining,
       hookLength: hookState.current.status === 'idle' ? 0 : Math.round(dist)
     });
 
@@ -466,7 +572,6 @@ export const Player: React.FC = () => {
       chainInstancedMesh.current.count = numLinks;
       
       chainMidPoint.addVectors(pPos, hPos).multiplyScalar(0.5);
-      // Droop is higher when idle/firing, tightens when retracting
       const droopAmount = hookState.current.status === 'retracting' && hookState.current.attachedEnemy ? 0.2 : Math.min(dist * 0.2, 2.0);
       chainMidPoint.y -= droopAmount;
       
@@ -481,7 +586,6 @@ export const Player: React.FC = () => {
 
         chainDummy.position.copy(chainPos);
         
-        // Smooth rotation along the curve
         chainAxis.crossVectors(chainUp, chainTangent).normalize();
         const radians = Math.acos(Math.max(-1, Math.min(1, chainUp.dot(chainTangent))));
         chainDummy.quaternion.setFromAxisAngle(chainAxis, radians);
@@ -493,6 +597,94 @@ export const Player: React.FC = () => {
         chainInstancedMesh.current.setMatrixAt(i, chainDummy.matrix);
       }
       chainInstancedMesh.current.instanceMatrix.needsUpdate = true;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // ═══  PUSH HOOK LOGIC  ═══════════════════════════════
+    // ═══════════════════════════════════════════════════════
+    const pushHookPos = pushHookRef.current.translation();
+    const phPos = new THREE.Vector3(pushHookPos.x, pushHookPos.y, pushHookPos.z);
+    const pushDist = pPos.distanceTo(phPos);
+
+    if (pushHookTipRef.current) {
+      pushHookTipRef.current.visible = pushHookState.current.status !== 'idle';
+    }
+
+    if (pushHookState.current.status === 'idle') {
+      if (pushHookRef.current.bodyType() !== rapier.RigidBodyType.KinematicPositionBased) {
+        pushHookRef.current.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
+      }
+      pushHookRef.current.setNextKinematicTranslation({ x: 0, y: -1000, z: 0 });
+      if (pushChainInstancedMesh.current) pushChainInstancedMesh.current.count = 0;
+    } 
+    else if (pushHookState.current.status === 'firing') {
+      // Spin the concussion fist
+      if (pushHookTipRef.current) {
+        pushHookTipRef.current.rotation.y -= delta * 25;
+        pushHookTipRef.current.rotation.z += delta * 20;
+      }
+
+      const timeAlive = now - pushHookState.current.lastFireTime;
+      if (pushDist > maxHookLength || timeAlive > 2.0) {
+        pushHookState.current.status = 'retracting';
+      }
+    } 
+    else if (pushHookState.current.status === 'retracting') {
+      if (pushHookRef.current.bodyType() !== rapier.RigidBodyType.KinematicPositionBased) {
+        pushHookRef.current.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
+      }
+
+      const dir = pPos.clone().sub(phPos);
+      const distanceToPlayer = dir.length();
+      const step = retractSpeed * 1.5 * delta;
+      const newPos = step >= distanceToPlayer
+        ? pPos.clone()
+        : phPos.clone().add(dir.normalize().multiplyScalar(step));
+      pushHookRef.current.setNextKinematicTranslation(newPos);
+
+      if (pushHookTipRef.current) {
+        pushHookTipRef.current.rotation.y += delta * 25;
+        pushHookTipRef.current.rotation.z -= delta * 20;
+      }
+
+      if (pushDist < 2 || distanceToPlayer < step) {
+        pushHookState.current.status = 'idle';
+        pushHookState.current.lastFireTime = performance.now() / 1000;
+      }
+    }
+
+    // --- Draw Push Hook Chain ---
+    if (pushChainInstancedMesh.current && pushHookState.current.status !== 'idle') {
+      const linkLength = 0.35;
+      const numLinks = Math.min(150, Math.floor(pushDist / linkLength));
+      pushChainInstancedMesh.current.count = numLinks;
+      
+      pushChainMidPoint.addVectors(pPos, phPos).multiplyScalar(0.5);
+      const droopAmount = pushHookState.current.status === 'retracting' ? 0.1 : Math.min(pushDist * 0.15, 1.5);
+      pushChainMidPoint.y -= droopAmount;
+      
+      pushChainCurve.v0.copy(pPos);
+      pushChainCurve.v1.copy(pushChainMidPoint);
+      pushChainCurve.v2.copy(phPos);
+
+      for (let i = 0; i < numLinks; i++) {
+        const t = i / (numLinks - 1 || 1);
+        pushChainCurve.getPoint(t, pushChainPos);
+        pushChainCurve.getTangent(t, pushChainTangent);
+
+        pushChainDummy.position.copy(pushChainPos);
+        
+        pushChainAxis.crossVectors(chainUp, pushChainTangent).normalize();
+        const radians = Math.acos(Math.max(-1, Math.min(1, chainUp.dot(pushChainTangent))));
+        pushChainDummy.quaternion.setFromAxisAngle(pushChainAxis, radians);
+        
+        pushChainDummy.rotateX(Math.PI / 2);
+        if (i % 2 === 0) pushChainDummy.rotateY(Math.PI / 4);
+        
+        pushChainDummy.updateMatrix();
+        pushChainInstancedMesh.current.setMatrixAt(i, pushChainDummy.matrix);
+      }
+      pushChainInstancedMesh.current.instanceMatrix.needsUpdate = true;
     }
   });
 
@@ -550,6 +742,10 @@ export const Player: React.FC = () => {
           if (name && (name.startsWith('enemy') || name.startsWith('bot'))) {
             hookState.current.status = 'retracting'; // Only retract on valid targets (hit an enemy)
             hookState.current.attachedEnemy = name;
+            
+            useGameStore.getState().applyMaim(name);
+            useGameStore.getState().applyPushCredit(name, 'player');
+            
             cameraShake.current = 0.4; // Big impact shake
             // Effects
             const ep = e.other.rigidBody?.translation();
@@ -834,6 +1030,127 @@ export const Player: React.FC = () => {
 
       {/* Chain Links */}
       <instancedMesh ref={chainInstancedMesh} args={[chainGeo, chainMat, 150]} castShadow frustumCulled={false} />
+
+      {/* ═══ PUSH HOOK PROJECTILE ═══ */}
+      <RigidBody
+        ref={pushHookRef}
+        type="dynamic"
+        colliders={false}
+        ccd
+        gravityScale={0}
+        restitution={0.5}
+        friction={0}
+        linearDamping={0}
+        angularDamping={0}
+        position={[0, -1000, 0]}
+        collisionGroups={interactionGroups(2, [0, 1])}
+        onCollisionEnter={(e) => {
+          if (pushHookState.current.status !== 'firing') return;
+          
+          // @ts-ignore
+          const name = e.other.rigidBodyObject?.userData?.name || e.other.rigidBodyObject?.name;
+          const otherBody = e.other.rigidBody;
+          
+          if (name === 'player') return; // Don't push yourself
+          
+          if (otherBody && otherBody.bodyType() !== rapier.RigidBodyType.Fixed) {
+            // Push the target AWAY from the player
+            const playerPos = playerRef.current!.translation();
+            const ep = otherBody.translation();
+            const pushDir = new THREE.Vector3(ep.x - playerPos.x, 0.3, ep.z - playerPos.z).normalize();
+            
+            // Restore dynamic body type before applying impulse
+            if (otherBody.bodyType() !== rapier.RigidBodyType.Dynamic) {
+              otherBody.setBodyType(rapier.RigidBodyType.Dynamic, true);
+            }
+            otherBody.setLinvel({ x: pushDir.x * PUSH_FORCE, y: pushDir.y * PUSH_FORCE * 0.5, z: pushDir.z * PUSH_FORCE }, true);
+            
+            if (name) {
+              // Apply maim debuff
+              useGameStore.getState().applyMaim(name);
+              // Track push credit for kill attribution on hazard death
+              useGameStore.getState().applyPushCredit(name, 'player');
+            }
+            
+            // Visual feedback
+            useGameStore.getState().spawnEffect('impact', [ep.x, ep.y, ep.z], '#d946ef');
+            cameraShake.current = 0.3;
+            
+            // Start retracting immediately after push
+            pushHookState.current.status = 'retracting';
+          } else {
+            // Hit a wall — bounce effect and retract
+            const pos = pushHookRef.current!.translation();
+            useGameStore.getState().spawnEffect('impact', [pos.x, pos.y, pos.z], '#a855f7');
+            cameraShake.current = 0.1;
+            pushHookState.current.status = 'retracting';
+          }
+        }}
+      >
+        <BallCollider args={[0.35]} />
+        <Trail width={2.0} length={15} color="#d946ef" attenuation={(t) => t * t}>
+          <group ref={pushHookTipRef}>
+            {/* Core Energy Sphere */}
+            <mesh castShadow>
+              <sphereGeometry args={[0.25, 16, 16]} />
+              <meshStandardMaterial 
+                color="#d946ef" 
+                emissive="#a855f7" 
+                emissiveIntensity={3} 
+                metalness={0.3} 
+                roughness={0.1} 
+              />
+            </mesh>
+            {/* Outer Glow Shell */}
+            <mesh>
+              <sphereGeometry args={[0.35, 16, 16]} />
+              <meshStandardMaterial 
+                color="#c026d3" 
+                transparent 
+                opacity={0.3} 
+                emissive="#d946ef" 
+                emissiveIntensity={2} 
+              />
+            </mesh>
+            {/* 4 Rotating Knuckle Prongs */}
+            {[0, 1, 2, 3].map((i) => (
+              <mesh 
+                key={i} 
+                castShadow
+                position={[
+                  Math.cos(i * Math.PI/2) * 0.4, 
+                  Math.sin(i * Math.PI/2) * 0.4, 
+                  0
+                ]} 
+                rotation={[0, 0, i * Math.PI/2]}
+              >
+                <octahedronGeometry args={[0.12, 0]} />
+                <meshStandardMaterial 
+                  color="#e879f9" 
+                  metalness={1} 
+                  roughness={0.05} 
+                  emissive="#d946ef" 
+                  emissiveIntensity={1.5} 
+                />
+              </mesh>
+            ))}
+            {/* Central Cross Energy Bars */}
+            <mesh castShadow rotation={[0, 0, Math.PI/4]}>
+              <boxGeometry args={[0.8, 0.06, 0.06]} />
+              <meshStandardMaterial color="#f0abfc" emissive="#d946ef" emissiveIntensity={2} />
+            </mesh>
+            <mesh castShadow rotation={[0, 0, -Math.PI/4]}>
+              <boxGeometry args={[0.8, 0.06, 0.06]} />
+              <meshStandardMaterial color="#f0abfc" emissive="#d946ef" emissiveIntensity={2} />
+            </mesh>
+            {/* Point Light for glow */}
+            <pointLight color="#d946ef" intensity={8} distance={6} />
+          </group>
+        </Trail>
+      </RigidBody>
+
+      {/* Push Hook Chain Links */}
+      <instancedMesh ref={pushChainInstancedMesh} args={[pushChainGeo, pushChainMat, 150]} castShadow frustumCulled={false} />
     </>
   );
 };

@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { RigidBody, RapierRigidBody, useRapier, interactionGroups, CapsuleCollider, BallCollider } from '@react-three/rapier';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
@@ -49,6 +49,7 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
   const shurikenRef = useRef<THREE.Group>(null);
   
   const { world, rapier } = useRapier();
+  const { camera } = useThree();
   const teamColor = useGameStore(state => state.teams.find(t => t.id === data.teamId)?.color || '#ff3333');
 
   const hookState = useRef({
@@ -62,6 +63,7 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
   const velocityRef = useRef<THREE.Vector3>(new THREE.Vector3());
   const isGrounded = useRef(false);
   const lastDustTime = useRef(0);
+  const losVisible = useRef(true);
 
   const [chainGeo] = useState(() => new THREE.TorusGeometry(0.15, 0.06, 8, 16));
   const [chainMat] = useState(() => new THREE.MeshStandardMaterial({ 
@@ -124,6 +126,25 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
       return;
     }
 
+    // --- Line-of-Sight Check for Name Visibility ---
+    const camPos = camera.position;
+    const enemyHeadPos = new THREE.Vector3(myPos.x, myPos.y + 2.5, myPos.z);
+    const toEnemy = enemyHeadPos.clone().sub(camPos);
+    const enemyDist = toEnemy.length();
+    const toEnemyDir = toEnemy.normalize();
+    
+    const losRay = new rapier.Ray(camPos, toEnemyDir);
+    const losHit = world.castRay(losRay, enemyDist, true, interactionGroups(0, [0])); // Only check walls (group 0)
+    
+    if (losHit) {
+      const hitDist = typeof (losHit as any).timeOfImpact === 'number' ? (losHit as any).timeOfImpact : 
+                     (typeof (losHit as any).toi === 'function' ? (losHit as any).toi() : (losHit as any).toi);
+      // If the wall is closer than the enemy, they're occluded
+      losVisible.current = hitDist === undefined || isNaN(hitDist) || hitDist >= enemyDist - 1.0;
+    } else {
+      losVisible.current = true; // No wall in the way
+    }
+
     // 1. Find nearest enemy
     let nearestDist = Infinity;
     let nearestPos: THREE.Vector3 | null = null;
@@ -179,12 +200,24 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
       }
 
       // Move via Rapier (Overrides Yuka's built-in position update)
-      if (nearestDist > 8) {
-        const linVel = rbRef.current.linvel();
-        rbRef.current.setLinvel({ x: moveDir.x * BOT_SPEED, y: linVel.y, z: moveDir.z * BOT_SPEED }, true);
+      // Check for maim debuff
+      const isMaimed = useGameStore.getState().isMaimed(data.id);
+      
+      if (isMaimed) {
+        // Being knocked back — decouple from AI movement overrides
+        const currentVel = rbRef.current.linvel();
+        const drag = 20 * delta;
+        const newVelX = Math.abs(currentVel.x) > drag ? currentVel.x - Math.sign(currentVel.x)*drag : 0;
+        const newVelZ = Math.abs(currentVel.z) > drag ? currentVel.z - Math.sign(currentVel.z)*drag : 0;
+        rbRef.current.setLinvel({ x: newVelX, y: currentVel.y, z: newVelZ }, true);
       } else {
-        // Stop and shoot
-        rbRef.current.setLinvel({ x: 0, y: rbRef.current.linvel().y, z: 0 }, true);
+        if (nearestDist > 8) {
+          const linVel = rbRef.current.linvel();
+          rbRef.current.setLinvel({ x: moveDir.x * BOT_SPEED, y: linVel.y, z: moveDir.z * BOT_SPEED }, true);
+        } else {
+          // Stop and shoot
+          rbRef.current.setLinvel({ x: 0, y: rbRef.current.linvel().y, z: 0 }, true);
+        }
       }
 
       // Look at target (Y zeroed for body rotation only)
@@ -216,6 +249,39 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
         hookRef.current.setBodyType(rapier.RigidBodyType.Dynamic, true);
         hookRef.current.setTranslation(origin, true);
         hookRef.current.setLinvel(aimDir.multiplyScalar(HOOK_SPEED), true);
+      }
+    }
+    
+    // --- Hazard & Pitfall Logic ---
+    let extraForceX = 0;
+    let extraForceZ = 0;
+    let extraForceY = 0;
+    let inwardDir: THREE.Vector3 | null = null;
+    
+    if (storeState.mapConfig.theme === 'Volcano') {
+      if (myPos.y < -1.0 && data.status !== 'dead') {
+        useGameStore.getState().damageEnemy(data.id, 50 * delta, 'hazard');
+      }
+    } else {
+      if (myPos.y < -12 && data.status !== 'dead') {
+        useGameStore.getState().damageEnemy(data.id, 9999, 'hazard');
+        useGameStore.getState().spawnEffect('blood_explosion', [myPos.x, -12, myPos.z], '#991b1b');
+      } else if (myPos.y < -2 && data.status !== 'dead') {
+        // Brutal vacuum gravity effect when falling
+        extraForceY = -30 * delta; 
+        inwardDir = new THREE.Vector3(-myPos.x, 0, -myPos.z).normalize();
+        extraForceX = inwardDir.x * 10 * delta; // Constant inward pull
+        extraForceZ = inwardDir.z * 10 * delta;
+      }
+    }
+
+    if (!isBeingHooked && (extraForceX !== 0 || extraForceY !== 0 || extraForceZ !== 0)) {
+      const currentVel = rbRef.current.linvel();
+      // If falling into trap, override horizontal velocity completely for the pull effect 
+      if (myPos.y < -2 && storeState.mapConfig.theme !== 'Volcano') {
+           rbRef.current.setLinvel({ x: inwardDir?.x ? inwardDir.x*10 : 0, y: currentVel.y + extraForceY, z: inwardDir?.z ? inwardDir.z*10 : 0 }, true);
+      } else {
+           rbRef.current.setLinvel({ x: currentVel.x + extraForceX, y: currentVel.y + extraForceY, z: currentVel.z + extraForceZ }, true);
       }
     }
 
@@ -388,18 +454,20 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
         <CapsuleCollider args={[0.5, 0.5]} position={[0, 1, 0]} />
         <CharacterModel actionStateRef={actionStateRef} velocityRef={velocityRef} teamColor={teamColor} />
         
-        {/* HP Bar */}
-        <Html position={[0, 2.5, 0]} center transform sprite>
-          <div className="flex flex-col items-center pointer-events-none">
-            <div className="text-xs font-bold text-white drop-shadow-md mb-1">{data.name}</div>
-            <div className="w-16 h-2 bg-gray-900 border border-gray-700 rounded-full overflow-hidden">
-              <div 
-                className="h-full transition-all duration-200" 
-                style={{ width: `${(data.hp / data.maxHp) * 100}%`, backgroundColor: teamColor }} 
-              />
+        {/* HP Bar - Only visible when in line of sight */}
+        {losVisible.current && (
+          <Html position={[0, 2.5, 0]} center transform sprite>
+            <div className="flex flex-col items-center pointer-events-none">
+              <div className="text-xs font-bold text-white drop-shadow-md mb-1">{data.name}</div>
+              <div className="w-16 h-2 bg-gray-900 border border-gray-700 rounded-full overflow-hidden">
+                <div 
+                  className="h-full transition-all duration-200" 
+                  style={{ width: `${(data.hp / data.maxHp) * 100}%`, backgroundColor: teamColor }} 
+                />
+              </div>
             </div>
-          </div>
-        </Html>
+          </Html>
+        )}
       </RigidBody>
 
       {/* Hook Projectile */}
@@ -426,6 +494,9 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
           if (name && (name.startsWith('enemy') || name.startsWith('bot') || name === 'player')) {
             hookState.current.status = 'retracting'; // Always retract on HIT
             hookState.current.attachedTarget = name;
+            
+            useGameStore.getState().applyMaim(name);
+            useGameStore.getState().applyPushCredit(name, data.id);
             
             const ep = e.other.rigidBody?.translation();
             if (ep) useGameStore.getState().spawnEffect('impact', [ep.x, ep.y, ep.z], '#eab308');

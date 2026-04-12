@@ -58,3 +58,73 @@ input[type="range"]::-moz-range-thumb {
   background: rgba(34, 211, 238, 0.3);
   color: white;
 }
+
+/* Sci-fi Slanted Architecture */
+.sci-fi-panel {
+  position: relative;
+  background: rgba(10, 15, 30, 0.85); /* deep blue-black */
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  clip-path: polygon(15px 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%, 0 15px);
+  border-left: 2px solid rgba(34, 211, 238, 0.5); /* cyan accent edge */
+}
+.sci-fi-panel::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(34,211,238,0.05) 0%, transparent 50%, rgba(217,70,239,0.05) 100%);
+}
+
+.sci-fi-button {
+  clip-path: polygon(0 0, calc(100% - 15px) 0, 100% 15px, 100% 100%, 15px 100%, 0 calc(100% - 15px));
+  position: relative;
+}
+
+/* Animations */
+@keyframes scanline {
+  0% { transform: translateY(-100%); opacity: 0; }
+  10% { opacity: 0.5; }
+  90% { opacity: 0.5; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+
+.animate-scanline {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 10px;
+  background: linear-gradient(to bottom, transparent, rgba(34, 211, 238, 0.2), transparent);
+  pointer-events: none;
+  z-index: 100;
+  animation: scanline 4s linear infinite;
+}
+
+@keyframes glitch {
+  0% { transform: translate(0) }
+  20% { transform: translate(-2px, 1px) }
+  40% { transform: translate(-1px, -1px) }
+  60% { transform: translate(2px, 1px) }
+  80% { transform: translate(1px, -1px) }
+  100% { transform: translate(0) }
+}
+.glitch-hover:hover {
+  animation: glitch 0.2s cubic-bezier(.25, .46, .45, .94) both infinite;
+}
+
+/* Hologram Effects */
+.hologram-card {
+  box-shadow: inset 0 0 10px rgba(34, 211, 238, 0.2), 0 0 15px rgba(34, 211, 238, 0.1);
+  border: 1px solid rgba(34, 211, 238, 0.3);
+  transition: all 0.3s ease;
+}
+.hologram-card:hover {
+  box-shadow: inset 0 0 20px rgba(34, 211, 238, 0.4), 0 0 25px rgba(34, 211, 238, 0.3);
+  border-color: rgba(34, 211, 238, 0.8);
+}
+
+.neon-text-cyan {
+  text-shadow: 0 0 5px rgba(34,211,238,0.5), 0 0 10px rgba(34,211,238,0.5), 0 0 20px rgba(34,211,238,0.3);
+}
+.neon-text-red {
+  text-shadow: 0 0 5px rgba(239,68,68,0.5), 0 0 10px rgba(239,68,68,0.5), 0 0 20px rgba(239,68,68,0.3);
+}

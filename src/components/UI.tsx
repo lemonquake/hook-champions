@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Crosshair, Skull, Target, Shield, Zap, Anchor, Scissors, Box, Circle, Cylinder } from 'lucide-react';
 
 export const UI: React.FC = () => {
-  const { hp, maxHp, cooldown, hookLength, hookSpeed, retractSpeed, moveSpeed, status, respawnTimer, points } = useGameStore();
+  const { hp, maxHp, cooldown, pushHookCooldown, hookLength, hookSpeed, retractSpeed, moveSpeed, status, respawnTimer, points } = useGameStore();
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showUpgrades, setShowUpgrades] = useState(false);
 
@@ -40,43 +40,64 @@ export const UI: React.FC = () => {
     <div className="pointer-events-none absolute inset-0 z-10 flex h-full w-full flex-col justify-between overflow-hidden font-mono text-white">
       {/* Crosshair */}
       {status === 'alive' && (
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-          <div className="relative flex h-8 w-8 items-center justify-center">
-            <div className="absolute h-1 w-1 rounded-full bg-white" />
-            <div className="absolute h-full w-[2px] bg-white/50" />
-            <div className="absolute h-[2px] w-full bg-white/50" />
+        <motion.div 
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+          animate={{ rotate: [0, 90] }}
+          transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+        >
+          <div className="relative flex h-10 w-10 items-center justify-center">
+            <div className="absolute h-1.5 w-1.5 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,1)]" />
+            <div className="absolute h-[60%] w-[2px] bg-cyan-500/50 mask-image-linear-gradient" />
+            <div className="absolute h-[2px] w-[60%] bg-cyan-500/50" />
+            <motion.div className="absolute h-12 w-12 rounded-full border border-dashed border-cyan-400/30" 
+              animate={{ rotate: -180 }} transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+            />
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* Top Bar */}
       <div className="flex w-full justify-between p-6">
         <div className="flex flex-col gap-2">
-          <div className="text-4xl font-black tracking-tighter text-red-500 drop-shadow-[0_0_10px_rgba(239,68,68,0.8)]">
-            {status === 'alive' ? `${Math.ceil(hp)} / ${maxHp} HP` : 'DEAD'}
+          <div className="sci-fi-panel px-6 py-2 border-l-4 border-red-500 flex items-center justify-center">
+            <div className="text-4xl font-black tracking-tighter text-red-500 neon-text-red">
+              {status === 'alive' ? `${Math.ceil(hp)} / ${maxHp}` : 'DEAD'}
+            </div>
           </div>
+          {/* Circular Cooldown Indicators */}
           {status === 'alive' && (
-            <div className="flex items-center gap-3">
-              <div className="text-sm font-bold uppercase tracking-widest text-gray-400">Cooldown</div>
-              <div className="h-2 w-32 overflow-hidden rounded-full bg-gray-800">
-                <div 
-                  className="h-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)] transition-all duration-100"
-                  style={{ width: `${Math.max(0, 100 - (cooldown / 2) * 100)}%` }}
-                />
-              </div>
+            <div className="flex items-center gap-3 mt-2 pl-2">
+              <CooldownCircle 
+                label="HOOK" 
+                keybind="LMB" 
+                cooldown={cooldown} 
+                maxCooldown={2} 
+                color="#22d3ee" 
+                glowColor="rgba(34,211,238,0.6)" 
+              />
+              <CooldownCircle 
+                label="PUSH" 
+                keybind="RMB" 
+                cooldown={pushHookCooldown} 
+                maxCooldown={2} 
+                color="#d946ef" 
+                glowColor="rgba(217,70,239,0.6)" 
+              />
             </div>
           )}
         </div>
         <div className="flex flex-col items-end gap-2">
-          <div className="flex items-center gap-2 rounded-full border border-green-500/30 bg-green-500/10 px-3 py-1">
-            <div className="h-2 w-2 animate-pulse rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)]" />
-            <span className="text-[10px] font-black uppercase tracking-widest text-green-400">Multiplayer Active</span>
+          <div className="flex items-center gap-2 sci-fi-panel px-4 py-1.5 border-r-2 border-green-500">
+            <div className="h-2 w-2 animate-pulse rounded-full bg-green-500 shadow-[0_0_10px_rgba(34,197,94,1)]" />
+            <span className="text-[11px] font-black uppercase tracking-widest text-green-400">Uplink Active</span>
           </div>
-          <div className="text-2xl font-bold text-yellow-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.8)]">
-            ${points}
+          <div className="sci-fi-panel px-6 py-2 border-r-4 border-yellow-400 mt-2">
+            <div className="text-3xl font-black text-yellow-400 drop-shadow-[0_0_10px_rgba(250,204,21,1)]">
+              ${points.toLocaleString()}
+            </div>
           </div>
-          <div className="text-sm text-gray-400">Press [U] for Upgrades</div>
-          <div className="text-sm text-gray-400">Hold [TAB] for Scoreboard</div>
+          <div className="text-xs font-bold tracking-widest text-gray-400 mt-2 bg-black/40 px-3 py-1 sci-fi-button cursor-default hover:text-white transition-colors">SYSTEM LOG [TAB]</div>
+          <div className="text-xs font-bold tracking-widest text-gray-400 bg-black/40 px-3 py-1 sci-fi-button cursor-default hover:text-white transition-colors">BLACK MARKET [U]</div>
         </div>
       </div>
 
@@ -87,10 +108,11 @@ export const UI: React.FC = () => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 flex flex-col items-center justify-center bg-red-950/80 backdrop-blur-sm"
+            className="absolute inset-0 flex flex-col items-center justify-center bg-red-950/90 backdrop-blur-md"
           >
-            <h1 className="text-6xl font-black text-red-500 mb-4">YOU DIED</h1>
-            <p className="text-2xl text-white">Respawning in {Math.ceil(respawnTimer)}s...</p>
+            <div className="animate-scanline" />
+            <h1 className="text-8xl font-black text-red-500 mb-4 glitch-hover neon-text-red">CRITICAL FAILURE</h1>
+            <p className="text-3xl font-bold tracking-widest text-white/80 uppercase">Reboot sequence in {Math.ceil(respawnTimer)}s...</p>
           </motion.div>
         )}
       </AnimatePresence>
@@ -105,9 +127,12 @@ export const UI: React.FC = () => {
         {showUpgrades && <Upgrades onClose={() => setShowUpgrades(false)} />}
       </AnimatePresence>
 
+      {/* Kill Celebration Effects */}
+      <KillEffectsOverlay />
+
       {/* Bottom Stats */}
-      <div className="flex w-full justify-between bg-gradient-to-t from-black/80 to-transparent p-6 pt-20">
-        <div className="flex gap-8">
+      <div className="flex w-full justify-between bg-gradient-to-t from-[#0a0f18]/80 to-transparent p-6 pt-20">
+        <div className="flex gap-4">
           <StatBox label="Hook Length" value={`${hookLength}m`} />
           <StatBox label="Hook Speed" value={`${hookSpeed.toFixed(1)}m/s`} />
           <StatBox label="Retract Speed" value={`${retractSpeed.toFixed(1)}m/s`} />
@@ -118,12 +143,334 @@ export const UI: React.FC = () => {
   );
 };
 
+// ─── Circular Cooldown Indicator Component ──────────────────────────
+const CooldownCircle = ({ label, keybind, cooldown, maxCooldown, color, glowColor }: {
+  label: string;
+  keybind: string;
+  cooldown: number;
+  maxCooldown: number;
+  color: string;
+  glowColor: string;
+}) => {
+  const isReady = cooldown <= 0;
+  const progress = isReady ? 1 : 1 - (cooldown / maxCooldown);
+  const radius = 26;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference * (1 - progress);
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <div className="relative" style={{ width: 64, height: 64 }}>
+        {/* Background ring */}
+        <svg width="64" height="64" className="absolute inset-0" style={{ transform: 'rotate(-90deg)' }}>
+          <circle
+            cx="32" cy="32" r={radius}
+            fill="none"
+            stroke="rgba(255,255,255,0.1)"
+            strokeWidth="4"
+          />
+          {/* Progress ring */}
+          <circle
+            cx="32" cy="32" r={radius}
+            fill="none"
+            stroke={isReady ? '#22c55e' : color}
+            strokeWidth="4"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            style={{ 
+              transition: 'stroke-dashoffset 0.1s linear',
+              filter: isReady ? `drop-shadow(0 0 6px rgba(34,197,94,0.8))` : `drop-shadow(0 0 4px ${glowColor})`
+            }}
+          />
+        </svg>
+        
+        {/* Center content */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          {isReady ? (
+            <motion.div
+              animate={{ opacity: [1, 0.3, 1] }}
+              transition={{ duration: 0.8, repeat: Infinity, ease: "easeInOut" }}
+              className="text-[11px] font-black tracking-wider"
+              style={{ color: '#22c55e', textShadow: '0 0 8px rgba(34,197,94,0.8)' }}
+            >
+              READY
+            </motion.div>
+          ) : (
+            <div 
+              className="text-xl font-black tabular-nums"
+              style={{ color, textShadow: `0 0 6px ${glowColor}` }}
+            >
+              {cooldown.toFixed(1)}
+            </div>
+          )}
+        </div>
+        
+        {/* Ready pulse ring */}
+        {isReady && (
+          <motion.div
+            className="absolute inset-0 rounded-full border-2"
+            style={{ borderColor: '#22c55e' }}
+            animate={{ scale: [1, 1.3, 1], opacity: [0.6, 0, 0.6] }}
+            transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+          />
+        )}
+      </div>
+      
+      {/* Label */}
+      <div className="flex flex-col items-center">
+        <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: isReady ? '#22c55e' : color }}>{label}</span>
+        <span className="text-[8px] font-bold text-gray-500">{keybind}</span>
+      </div>
+    </div>
+  );
+};
+
 const StatBox = ({ label, value }: { label: string; value: string }) => (
-  <div className="flex flex-col border-l-2 border-cyan-500/30 pl-3">
-    <span className="text-[10px] font-bold uppercase tracking-widest text-cyan-500/70">{label}</span>
-    <span className="text-2xl font-bold text-white drop-shadow-[0_0_5px_rgba(255,255,255,0.5)]">{value}</span>
+  <div className="flex flex-col sci-fi-panel px-4 py-2 border-l-4 border-cyan-400">
+    <span className="text-[10px] font-bold uppercase tracking-widest text-cyan-400/70">{label}</span>
+    <span className="text-2xl font-black text-white drop-shadow-[0_0_5px_rgba(255,255,255,0.5)]">{value}</span>
   </div>
 );
+
+// ─── Kill Celebration Effects ──────────────────────────────────────
+const KILL_TITLES = [
+  { text: 'ELIMINATED', color: '#ef4444', glow: 'rgba(239,68,68,0.8)' },
+  { text: 'DESTROYED', color: '#f97316', glow: 'rgba(249,115,22,0.8)' },
+  { text: 'OBLITERATED', color: '#eab308', glow: 'rgba(234,179,8,0.8)' },
+  { text: 'ANNIHILATED', color: '#a855f7', glow: 'rgba(168,85,247,0.8)' },
+  { text: 'TERMINATED', color: '#22d3ee', glow: 'rgba(34,211,238,0.8)' },
+  { text: 'WRECKED', color: '#f43f5e', glow: 'rgba(244,63,94,0.8)' },
+  { text: 'VAPORIZED', color: '#06b6d4', glow: 'rgba(6,182,212,0.8)' },
+  { text: 'CRUSHED', color: '#84cc16', glow: 'rgba(132,204,22,0.8)' },
+  { text: 'DELETED', color: '#ec4899', glow: 'rgba(236,72,153,0.8)' },
+  { text: 'SHATTERED', color: '#8b5cf6', glow: 'rgba(139,92,246,0.8)' },
+];
+
+const KillEffectsOverlay: React.FC = () => {
+  const killFeedEffects = useGameStore(state => state.killFeedEffects);
+  
+  useEffect(() => {
+    // Auto-cleanup old effects
+    const interval = setInterval(() => {
+      const now = performance.now();
+      killFeedEffects.forEach(e => {
+        if (now - e.time > 2500) {
+          useGameStore.getState().removeKillEffect(e.id);
+        }
+      });
+    }, 500);
+    return () => clearInterval(interval);
+  }, [killFeedEffects]);
+  
+  return (
+    <AnimatePresence>
+      {killFeedEffects.map(effect => (
+        <KillEffect key={effect.id} effect={effect} />
+      ))}
+    </AnimatePresence>
+  );
+};
+
+const KillEffect: React.FC<{ effect: { id: string; variant: number; victimName: string; time: number } }> = ({ effect }) => {
+  const title = KILL_TITLES[effect.variant % KILL_TITLES.length];
+  
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
+      className="absolute inset-0 pointer-events-none"
+    >
+      {/* Screen edge flash */}
+      <motion.div
+        className="absolute inset-0"
+        style={{
+          boxShadow: `inset 0 0 120px 30px ${title.glow}`,
+        }}
+        initial={{ opacity: 0.8 }}
+        animate={{ opacity: 0 }}
+        transition={{ duration: 1.2, ease: 'easeOut' }}
+      />
+      
+      {/* Kill title banner */}
+      <motion.div
+        className="absolute left-1/2 -translate-x-1/2"
+        style={{ top: '30%' }}
+        initial={{ scale: 3, opacity: 0, y: -20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.5, opacity: 0, y: 20 }}
+        transition={{ type: 'spring', stiffness: 300, damping: 15, duration: 0.5 }}
+      >
+        <div className="flex flex-col items-center gap-1">
+          {/* Main kill verb */}
+          <motion.div
+            className="text-5xl font-black tracking-[0.3em] uppercase"
+            style={{ 
+              color: title.color, 
+              textShadow: `0 0 30px ${title.glow}, 0 0 60px ${title.glow}, 0 2px 0 rgba(0,0,0,0.5)`,
+              WebkitTextStroke: '1px rgba(255,255,255,0.2)'
+            }}
+            animate={{ 
+              scale: [1, 1.05, 1],
+              textShadow: [
+                `0 0 30px ${title.glow}, 0 0 60px ${title.glow}`,
+                `0 0 50px ${title.glow}, 0 0 100px ${title.glow}`,
+                `0 0 30px ${title.glow}, 0 0 60px ${title.glow}`,
+              ]
+            }}
+            transition={{ duration: 0.6, repeat: 2, ease: 'easeInOut' }}
+          >
+            {title.text}
+          </motion.div>
+          
+          {/* Victim name */}
+          <motion.div
+            className="text-lg font-bold tracking-[0.5em] uppercase text-white/80"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2, duration: 0.4 }}
+          >
+            ◆ {effect.victimName} ◆
+          </motion.div>
+        </div>
+      </motion.div>
+
+      {/* Decorative lines shooting across */}
+      {[...Array(4)].map((_, i) => (
+        <motion.div
+          key={i}
+          className="absolute h-[2px]"
+          style={{
+            top: `${28 + i * 3}%`,
+            backgroundColor: title.color,
+            boxShadow: `0 0 10px ${title.glow}`,
+          }}
+          initial={{ left: '-100%', width: '60%', opacity: 0.8 }}
+          animate={{ left: '140%', opacity: 0 }}
+          transition={{ 
+            duration: 0.6, 
+            delay: 0.1 * i, 
+            ease: 'easeOut' 
+          }}
+        />
+      ))}
+      {[...Array(4)].map((_, i) => (
+        <motion.div
+          key={`r-${i}`}
+          className="absolute h-[2px]"
+          style={{
+            top: `${35 + i * 3}%`,
+            backgroundColor: title.color,
+            boxShadow: `0 0 10px ${title.glow}`,
+          }}
+          initial={{ right: '-100%', width: '50%', opacity: 0.8 }}
+          animate={{ right: '140%', opacity: 0 }}
+          transition={{ 
+            duration: 0.5, 
+            delay: 0.15 * i, 
+            ease: 'easeOut' 
+          }}
+        />
+      ))}
+
+      {/* Corner skulls / decorations based on variant */}
+      {effect.variant % 3 === 0 && (
+        <>
+          <motion.div
+            className="absolute top-[25%] left-[15%] text-6xl"
+            style={{ color: title.color, filter: `drop-shadow(0 0 10px ${title.glow})` }}
+            initial={{ scale: 0, rotate: -180 }}
+            animate={{ scale: 1, rotate: 0 }}
+            exit={{ scale: 0 }}
+            transition={{ type: 'spring', stiffness: 200, delay: 0.1 }}
+          >
+            💀
+          </motion.div>
+          <motion.div
+            className="absolute top-[25%] right-[15%] text-6xl"
+            style={{ color: title.color, filter: `drop-shadow(0 0 10px ${title.glow})` }}
+            initial={{ scale: 0, rotate: 180 }}
+            animate={{ scale: 1, rotate: 0 }}
+            exit={{ scale: 0 }}
+            transition={{ type: 'spring', stiffness: 200, delay: 0.15 }}
+          >
+            💀
+          </motion.div>
+        </>
+      )}
+
+      {/* Expanding ring effect */}
+      {effect.variant % 3 === 1 && (
+        <motion.div
+          className="absolute left-1/2 -translate-x-1/2 rounded-full border-2"
+          style={{ top: '30%', borderColor: title.color, width: 40, height: 40 }}
+          initial={{ scale: 0.5, opacity: 1 }}
+          animate={{ scale: 8, opacity: 0 }}
+          transition={{ duration: 1.0, ease: 'easeOut' }}
+        />
+      )}
+      
+      {/* Particle burst (diamond shapes) */}
+      {effect.variant % 3 === 2 && (
+        <>
+          {[...Array(8)].map((_, i) => {
+            const angle = (i / 8) * Math.PI * 2;
+            const dist = 200;
+            return (
+              <motion.div
+                key={`p-${i}`}
+                className="absolute w-3 h-3"
+                style={{
+                  left: '50%',
+                  top: '32%',
+                  backgroundColor: title.color,
+                  boxShadow: `0 0 8px ${title.glow}`,
+                  transform: 'rotate(45deg)',
+                }}
+                initial={{ x: 0, y: 0, opacity: 1, scale: 1.5 }}
+                animate={{ 
+                  x: Math.cos(angle) * dist, 
+                  y: Math.sin(angle) * dist, 
+                  opacity: 0, 
+                  scale: 0 
+                }}
+                transition={{ duration: 0.8, ease: 'easeOut', delay: 0.05 * i }}
+              />
+            );
+          })}
+        </>
+      )}
+
+      {/* Points gained flash */}
+      <motion.div
+        className="absolute left-1/2 -translate-x-1/2 text-2xl font-black"
+        style={{ top: '42%', color: '#fbbf24', textShadow: '0 0 15px rgba(251,191,36,0.8)' }}
+        initial={{ opacity: 0, y: 0 }}
+        animate={{ opacity: [0, 1, 1, 0], y: -40 }}
+        transition={{ duration: 1.5, ease: 'easeOut', delay: 0.3 }}
+      >
+        +$100
+      </motion.div>
+
+      {/* Glitch scan line effect */}
+      <motion.div
+        className="absolute left-0 right-0 h-1"
+        style={{ 
+          top: '30%',
+          background: `linear-gradient(90deg, transparent, ${title.color}, transparent)`,
+        }}
+        initial={{ opacity: 0 }}
+        animate={{ 
+          opacity: [0, 1, 0, 0.8, 0],
+          top: ['28%', '35%', '30%', '40%', '28%']
+        }}
+        transition={{ duration: 0.5, ease: 'linear' }}
+      />
+    </motion.div>
+  );
+};
 
 const Scoreboard = () => {
   const { playerName, playerTeamId, kills, deaths, shotsFired, shotsHit, status, respawnTimer, enemies, teams } = useGameStore();
@@ -153,12 +500,12 @@ const Scoreboard = () => {
 
   return (
     <motion.div 
-      initial={{ opacity: 0, y: -20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
-      className="absolute left-1/2 top-24 w-[800px] -translate-x-1/2 rounded-xl border border-white/10 bg-black/80 p-6 backdrop-blur-md"
+      initial={{ opacity: 0, y: -50, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -50, scale: 0.95 }}
+      className="absolute left-1/2 top-24 w-[850px] -translate-x-1/2 border-t-4 border-cyan-500 bg-[#0a0f18]/90 p-6 backdrop-blur-md sci-fi-panel hologram-card shadow-[0_0_50px_rgba(34,211,238,0.15)]"
     >
-      <h2 className="mb-6 text-center text-2xl font-black tracking-widest text-white">SCOREBOARD</h2>
+      <h2 className="mb-6 text-center text-3xl font-black tracking-widest text-cyan-400 neon-text-cyan">COMBAT SCOREBOARD</h2>
       
       <div className="grid grid-cols-6 gap-4 border-b border-white/20 pb-2 text-sm font-bold text-gray-400">
         <div className="col-span-2">NAME</div>
@@ -174,7 +521,7 @@ const Scoreboard = () => {
           return (
             <div 
               key={p.id} 
-              className={`grid grid-cols-6 gap-4 rounded-lg px-4 py-2 items-center ${p.id === 'player' ? 'bg-white/10' : ''}`}
+              className={`grid grid-cols-6 gap-4 px-4 py-2 items-center mb-2 sci-fi-button transition-all hover:scale-[1.02] ${p.id === 'player' ? 'bg-cyan-500/20 border-cyan-400 shadow-[inset_0_0_15px_rgba(34,211,238,0.2)]' : 'bg-black/40 border-transparent hover:bg-white/10'}`}
               style={{ borderLeft: `4px solid ${team?.color || '#fff'}` }}
             >
               <div className="col-span-2 font-bold text-white flex items-center gap-2">
@@ -282,31 +629,35 @@ const Upgrades = ({ onClose }: { onClose: () => void }) => {
 
   return (
     <motion.div 
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.95 }}
-      className="pointer-events-auto absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      initial={{ opacity: 0, scale: 0.95, rotateX: 15 }}
+      animate={{ opacity: 1, scale: 1, rotateX: 0 }}
+      exit={{ opacity: 0, scale: 0.95, rotateX: -15 }}
+      style={{ perspective: 1500 }}
+      className="pointer-events-auto absolute inset-0 flex items-center justify-center bg-[#050510]/80 backdrop-blur-md"
     >
-      <div className="flex max-h-[90vh] min-h-[500px] w-[800px] flex-col overflow-hidden rounded-2xl border border-cyan-500/30 bg-gray-950 shadow-[0_0_50px_rgba(6,182,212,0.15)] flex flex-col">
+      <div className="flex max-h-[90vh] min-h-[600px] w-[950px] flex-col overflow-hidden sci-fi-panel hologram-card shadow-[0_0_60px_rgba(168,85,247,0.15)] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-white/10 p-6 bg-gray-900/50">
+        <div className="flex items-center justify-between border-b border-cyan-500/30 p-6 bg-cyan-950/20">
           <div className="flex items-center gap-6">
-            <h2 className="text-3xl font-black tracking-widest text-white">UPGRADES</h2>
-            <div className="flex bg-black/50 p-1 rounded-lg">
+            <h2 className="text-3xl font-black tracking-widest text-cyan-400 neon-text-cyan flex items-center gap-3">
+              <Zap className="text-cyan-400" />
+              UPGRADES
+            </h2>
+            <div className="flex bg-[#050510] p-1 sci-fi-button border border-white/10">
               {['stats', 'augments', 'cosmetics'].map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab as any)}
-                  className={`px-4 py-1.5 rounded uppercase text-sm font-bold transition-all ${activeTab === tab ? 'bg-cyan-500/20 text-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.2)]' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}
+                  className={`px-4 py-1.5 uppercase tracking-widest text-[11px] font-black transition-all sci-fi-button ${activeTab === tab ? 'bg-cyan-500 text-[#050510] shadow-[0_0_15px_rgba(34,211,238,0.5)]' : 'text-gray-500 hover:text-white hover:bg-white/10'}`}
                 >
                   {tab}
                 </button>
               ))}
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="text-2xl font-bold text-yellow-400 drop-shadow-[0_0_5px_rgba(250,204,21,0.5)]">${store.points}</div>
-            <button onClick={onClose} className="rounded bg-white/10 px-4 py-2 font-bold text-white hover:bg-white/20 transition-colors">CLOSE</button>
+          <div className="flex items-center gap-6">
+            <div className="text-2xl font-black text-yellow-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.8)] px-4 py-1.5 sci-fi-panel border-b-2 border-yellow-400">${store.points.toLocaleString()}</div>
+            <button onClick={onClose} className="sci-fi-button bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white border border-red-500/50 px-6 py-2 font-black tracking-widest transition-all">CLOSE</button>
           </div>
         </div>
 
@@ -325,29 +676,32 @@ const Upgrades = ({ onClose }: { onClose: () => void }) => {
               </div>
               <div className="grid grid-cols-2 gap-6">
                 {upgrades.map(u => (
-                  <div key={u.id} className="flex flex-col rounded-lg border border-white/10 bg-white/5 p-4 relative overflow-hidden group">
+                  <motion.div key={u.id} className="flex flex-col sci-fi-panel border-l-4 border-cyan-400 p-4 relative overflow-hidden group hologram-card"
+                    whileHover={{ scale: 1.02, rotateX: 2, rotateY: -2 }}
+                    transition={{ type: "spring", stiffness: 300 }}
+                  >
                     <div className="absolute inset-0 bg-cyan-400/5 opacity-0 group-hover:opacity-100 transition-opacity" />
                     <div className="flex items-center justify-between relative z-10">
                       <div className="flex items-center gap-3">
                         <div className="text-cyan-400 drop-shadow-[0_0_5px_rgba(34,211,238,0.3)]">{u.icon}</div>
                         <div>
-                          <div className="font-bold text-white">{u.name}</div>
-                          <div className="text-sm text-gray-400">Current: {u.current.toFixed(1)}</div>
+                          <div className="font-black tracking-widest uppercase text-white">{u.name}</div>
+                          <div className="text-xs font-bold text-gray-400 font-mono">PWR LEVEL: {u.current.toFixed(1)}</div>
                         </div>
                       </div>
                       <button
                         disabled={store.points < u.cost || u.current >= u.max}
                         onClick={() => store.buyUpgrade(u.id, u.cost, u.current + u.step)}
-                        className="flex flex-col items-center rounded bg-cyan-500/20 px-4 py-2 font-bold text-cyan-400 transition-colors hover:bg-cyan-500/40 disabled:opacity-50 disabled:hover:bg-cyan-500/20"
+                        className="flex flex-col items-center sci-fi-button bg-cyan-500/20 border border-cyan-500/50 px-4 py-2 font-black tracking-widest text-cyan-400 transition-all hover:bg-cyan-500 hover:text-[#050510] hover:shadow-[0_0_15px_rgba(34,211,238,0.8)] disabled:opacity-30 disabled:pointer-events-none"
                       >
-                        <span>UPGRADE</span>
-                        <span className="text-xs text-yellow-400">${u.cost}</span>
+                        <span className="text-[10px]">UPGRADE</span>
+                        <span className="text-sm text-yellow-400 drop-shadow-md">${u.cost}</span>
                       </button>
                     </div>
                     <div className="w-full relative z-10">
                        {renderProgressBar(u.current, u.min, u.max, u.step)}
                     </div>
-                  </div>
+                  </motion.div>
                 ))}
               </div>
             </div>
@@ -361,29 +715,31 @@ const Upgrades = ({ onClose }: { onClose: () => void }) => {
                 {augmentsData.map(aug => {
                   const isOwned = store.augments.includes(aug.id);
                   return (
-                    <div key={aug.id} className={`flex items-center justify-between rounded-lg border p-4 transition-all ${isOwned ? 'border-red-500/50 bg-red-500/10' : 'border-white/10 bg-white/5'}`}>
+                    <motion.div key={aug.id} className={`flex items-center justify-between sci-fi-panel p-4 transition-all hologram-card ${isOwned ? 'border-l-4 border-l-red-500 bg-red-950/30' : 'border-l-4 border-l-gray-600'}`}
+                      whileHover={{ scale: 1.01, x: 5 }}
+                    >
                       <div className="flex items-center gap-4">
                         <div className={`p-3 rounded-full ${isOwned ? 'bg-red-500/20 text-red-400 shadow-[0_0_15px_rgba(248,113,113,0.5)]' : 'bg-gray-800 text-gray-500'}`}>
                           {aug.icon}
                         </div>
                         <div>
-                          <div className={`font-bold text-lg ${isOwned ? 'text-white' : 'text-gray-300'}`}>{aug.name}</div>
-                          <div className="text-sm text-gray-400">{aug.desc}</div>
+                          <div className={`font-black uppercase tracking-widest text-lg ${isOwned ? 'text-red-400 neon-text-red' : 'text-gray-300'}`}>{aug.name}</div>
+                          <div className="text-xs font-bold text-gray-400 uppercase font-mono">{aug.desc}</div>
                         </div>
                       </div>
                       {isOwned ? (
-                        <div className="px-4 py-2 font-bold text-red-400 tracking-widest text-sm border border-red-500/30 rounded bg-red-500/10">INSTALLED</div>
+                        <div className="px-6 py-2 font-black tracking-widest text-xs sci-fi-button border border-red-500 bg-red-500 text-white shadow-[0_0_15px_rgba(239,68,68,0.6)]">INSTALLED</div>
                       ) : (
                         <button
                           disabled={store.points < aug.cost}
                           onClick={() => store.buyUpgrade('augment', aug.cost, aug.id)}
-                          className="flex flex-col items-center rounded bg-red-500/20 px-6 py-2 font-bold text-red-400 transition-colors hover:bg-red-500/40 disabled:opacity-50 disabled:hover:bg-red-500/20"
+                          className="flex flex-col items-center sci-fi-button border border-red-500/50 bg-red-500/20 px-6 py-2 font-black tracking-widest text-red-400 transition-all hover:bg-red-500 hover:text-white hover:shadow-[0_0_15px_rgba(239,68,68,0.8)] disabled:opacity-30 disabled:pointer-events-none"
                         >
-                          <span>INSTALL</span>
-                          <span className="text-xs text-yellow-400">${aug.cost}</span>
+                          <span className="text-[10px]">INSTALL</span>
+                          <span className="text-sm text-yellow-400 drop-shadow-md">${aug.cost}</span>
                         </button>
                       )}
-                    </div>
+                    </motion.div>
                   );
                 })}
               </div>
@@ -405,8 +761,9 @@ const Upgrades = ({ onClose }: { onClose: () => void }) => {
                         const isEquipped = store[c.category] === item.id;
                         
                         return (
-                          <button
+                          <motion.button
                             key={item.id}
+                            whileHover={isEquipped ? {} : { scale: 1.05, rotateY: 5, rotateX: 5 }}
                             disabled={!isOwned && store.points < item.cost}
                             onClick={() => {
                               if (isOwned) {
@@ -415,18 +772,18 @@ const Upgrades = ({ onClose }: { onClose: () => void }) => {
                                 store.buyUpgrade(c.category, item.cost, item.id);
                               }
                             }}
-                            className={`flex flex-col items-center justify-center rounded-xl border p-4 transition-all relative overflow-hidden ${
+                            className={`flex flex-col items-center justify-center sci-fi-panel p-4 transition-all relative overflow-hidden hologram-card ${
                               isEquipped 
-                                ? 'border-purple-500 bg-purple-500/20 text-white shadow-[0_0_15px_rgba(168,85,247,0.3)]' 
+                                ? 'border-b-4 border-b-purple-500 bg-purple-900/40 text-purple-200 shadow-[0_0_20px_rgba(168,85,247,0.4)]' 
                                 : isOwned
-                                  ? 'border-white/20 bg-white/5 text-gray-300 hover:bg-white/10'
-                                  : 'border-white/10 bg-black/50 text-gray-500 hover:border-white/30'
+                                  ? 'border-white/20 bg-white/5 text-gray-300 hover:bg-white/10 hover:border-purple-400/50'
+                                  : 'border-white/10 bg-black/60 text-gray-500 hover:border-white/30'
                             }`}
                           >
-                            <div className="font-bold mb-1">{item.name}</div>
-                            {!isOwned && <div className="text-sm font-bold text-yellow-400">${item.cost}</div>}
-                            {isEquipped && <div className="absolute bottom-0 w-full text-center bg-purple-500 text-white text-[10px] font-bold py-0.5">EQUIPPED</div>}
-                          </button>
+                            <div className="font-black uppercase tracking-widest text-[11px] text-center mb-1">{item.name}</div>
+                            {!isOwned && <div className="text-sm font-black text-yellow-400 drop-shadow-md">${item.cost}</div>}
+                            {isEquipped && <div className="absolute top-0 left-0 w-full text-center bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white text-[9px] font-black tracking-widest uppercase py-0.5">ACTIVE</div>}
+                          </motion.button>
                         );
                       })}
                     </div>
