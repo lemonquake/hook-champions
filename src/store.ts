@@ -630,8 +630,9 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   initMultiplayer: () => {
     if (socket) return;
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     socket = new PartySocket({
-      host: "localhost:1999",
+      host: isLocal ? "localhost:1999" : "hook-champions.lemonquake.partykit.dev",
       room: "hook-arena",
     });
 
