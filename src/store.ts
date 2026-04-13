@@ -52,6 +52,7 @@ interface GameState {
   hp: number;
   maxHp: number;
   playerPosition: [number, number, number];
+  playerVelocity: [number, number, number];
   playerTeamId: number;
   playerName: string;
   cooldown: number;
@@ -73,12 +74,18 @@ interface GameState {
   status: 'alive' | 'dead';
   respawnTimer: number;
 
+  // Crosshair state
+  crosshairTargetLock: boolean;
+  setCrosshairTargetLock: (lock: boolean) => void;
+
   enemies: Record<string, EnemyData>;
   teams: TeamConfig[];
   mapConfig: { seed: number; density: number; size: number; theme: MapDesign; startPoints: number };
   peers: Record<string, PeerData>;
+  isRecording: boolean;
   
   setStats: (stats: Partial<GameState>) => void;
+  toggleRecording: () => void;
   damageEnemy: (id: string, amount: number, attackerId: string) => void;
   damagePlayer: (amount: number, attackerId: string) => void;
   recordShot: (id: string, hit: boolean) => void;
@@ -130,6 +137,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   hp: 100,
   maxHp: 100,
   playerPosition: [0, 1, 0],
+  playerVelocity: [0, 0, 0],
   playerTeamId: 1,
   playerName: 'Player',
   cooldown: 0,
@@ -139,6 +147,9 @@ export const useGameStore = create<GameState>((set, get) => ({
   moveSpeed: 12,
   maxHookLength: 30,
   
+  crosshairTargetLock: false,
+  setCrosshairTargetLock: (lock) => set({ crosshairTargetLock: lock }),
+
   hookTip: 'shuriken',
   chainLink: 'torus',
   points: 50000,
@@ -289,6 +300,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   })),
   
   setStats: (stats) => set((state) => ({ ...state, ...stats })),
+  toggleRecording: () => set((state) => ({ isRecording: !state.isRecording })),
   
   damageEnemy: (id, amount, attackerId) => set((state) => {
     const enemy = state.enemies[id];

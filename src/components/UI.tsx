@@ -57,6 +57,9 @@ export const UI: React.FC = () => {
         </div>
       </div>
 
+      {/* Central Crosshair Overlay */}
+      <EpicCrosshair />
+
       {/* Death Overlay */}
       {status === 'dead' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-950/90 backdrop-blur-md opacity-100 transition-opacity">
@@ -77,6 +80,9 @@ export const UI: React.FC = () => {
 
       {/* Kill Celebration Effects */}
       <KillEffectsOverlay />
+
+      {/* Local Telemetry HUD & AI Trainer */}
+      <TelemetryHUD />
 
       {/* Bottom Stats */}
       <BottomStats />
@@ -149,6 +155,67 @@ const BottomStats = () => {
         <StatBox label="Hook Speed" value={`${hookSpeed.toFixed(1)}m/s`} />
         <StatBox label="Retract Speed" value={`${retractSpeed.toFixed(1)}m/s`} />
         <StatBox label="Move Speed" value={`${moveSpeed}m/s`} />
+      </div>
+    </div>
+  );
+};
+
+// ─── AI Telemetry HUD ───────────────────────────────────────────────
+const TelemetryHUD = () => {
+  const store = useGameStore();
+  const isRecording = store.isRecording;
+  const toggleRecording = store.toggleRecording;
+  const pos = store.playerPosition;
+  const hp = store.hp;
+  const status = store.status;
+  const vel = store.playerVelocity;
+
+  // Background Telemetry loop
+  useEffect(() => {
+    if (!isRecording) return;
+    const interval = setInterval(() => {
+      const state = useGameStore.getState();
+      const payload = {
+        timestamp: Date.now(),
+        position: state.playerPosition,
+        velocity: state.playerVelocity,
+        hp: state.hp,
+        status: state.status,
+      };
+      // Fire and forget POST to Vite telemetry sink
+      fetch('/api/telemetry', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }).catch(err => {
+        // silently fail if network drops
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isRecording]);
+
+  return (
+    <div className="absolute top-24 left-6 pointer-events-auto flex flex-col gap-2">
+      <div className="sci-fi-panel p-4 border-l-4 border-emerald-400 bg-emerald-950/20 backdrop-blur-sm min-w-[250px]">
+        <div className="flex items-center justify-between mb-3 border-b border-emerald-500/30 pb-2">
+          <span className="text-xs font-black tracking-widest text-emerald-400">TELEMETRY LINK</span>
+          <div className="flex items-center gap-2">
+            {isRecording && <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,1)]" />}
+            <button 
+              onClick={toggleRecording}
+              className={`sci-fi-button px-3 py-1 text-[10px] font-black tracking-widest border transition-all ${isRecording ? 'bg-red-500/20 text-red-500 border-red-500/50 hover:bg-red-500 hover:text-white' : 'bg-green-500/20 text-green-500 border-green-500/50 hover:bg-green-500 hover:text-black'}`}
+            >
+              {isRecording ? 'STOP REC' : 'RECORD AI PATH'}
+            </button>
+          </div>
+        </div>
+        
+        <div className="flex flex-col gap-1 text-[11px] font-mono text-emerald-300/80">
+          <div className="flex justify-between"><span>X:</span><span className="text-white">{pos[0].toFixed(2)}</span></div>
+          <div className="flex justify-between"><span>ELEV Y:</span><span className="text-white">{pos[1].toFixed(2)}</span></div>
+          <div className="flex justify-between"><span>Z:</span><span className="text-white">{pos[2].toFixed(2)}</span></div>
+          <div className="h-px bg-emerald-500/30 my-1"/>
+          <div className="flex justify-between"><span>VEL Y:</span><span className="text-white">{vel[1].toFixed(2)} m/s</span></div>
+        </div>
       </div>
     </div>
   );
@@ -614,3 +681,172 @@ const Upgrades = ({ onClose }: { onClose: () => void }) => {
     </div>
   );
 };
+
+// ─── EPIC CROSSHAIR ────────────────────────────────────────────────────────────
+const EpicCrosshair = () => {
+  const isLocked = useGameStore(state => state.crosshairTargetLock);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const outerRingRef = useRef<SVGSVGElement>(null);
+  const innerRingRef = useRef<SVGSVGElement>(null);
+  const coreRef = useRef<HTMLDivElement>(null);
+  const bracketsRef = useRef<HTMLDivElement>(null);
+
+  // Setup continuous idle animations
+  useEffect(() => {
+    if (!outerRingRef.current || !innerRingRef.current) return;
+    
+    // Idle rotation
+    const outerAnim = anime({
+      targets: outerRingRef.current,
+      rotate: '1turn',
+      duration: 10000,
+      easing: 'linear',
+      loop: true
+    });
+    
+    const innerAnim = anime({
+      targets: innerRingRef.current,
+      rotate: '-1turn',
+      duration: 8000,
+      easing: 'linear',
+      loop: true
+    });
+
+    return () => {
+      outerAnim.pause();
+      innerAnim.pause();
+    };
+  }, []);
+
+  // Handle Target Lock animation state
+  useEffect(() => {
+    if (!containerRef.current || !bracketsRef.current || !coreRef.current || !outerRingRef.current || !innerRingRef.current) return;
+
+    if (isLocked) {
+      // VIOLENT LOCK ON
+      anime.remove([containerRef.current, bracketsRef.current, coreRef.current, outerRingRef.current, innerRingRef.current]);
+      
+      const tl = anime.timeline({ easing: 'easeOutElastic(1, .5)' });
+      
+      // Core pulse
+      tl.add({
+        targets: coreRef.current,
+        scale: [1, 2.5],
+        opacity: [0.8, 1],
+        backgroundColor: '#ef4444',
+        boxShadow: '0 0 20px 5px rgba(239,68,68,1)',
+        duration: 300
+      }, 0);
+
+      // Rings turn red and snap
+      tl.add({
+        targets: [outerRingRef.current, innerRingRef.current],
+        stroke: '#ef4444',
+        scale: [1, 0.7],
+        filter: 'drop-shadow(0 0 10px rgba(239,68,68,1))',
+        duration: 400
+      }, 0);
+
+      // Brackets slam inwards
+      tl.add({
+        targets: bracketsRef.current.children,
+        translateY: (el, i) => i === 0 || i === 1 ? '10px' : '-10px',
+        translateX: (el, i) => i === 0 || i === 2 ? '10px' : '-10px',
+        borderColor: '#ef4444',
+        boxShadow: '0 0 15px rgba(239,68,68,0.8)',
+        duration: 300
+      }, 0);
+
+      // Continuous violent shake and pulse while locked
+      anime({
+        targets: containerRef.current,
+        scale: [1, 1.05, 0.95, 1.02, 1],
+        rotate: [-1, 1, -1, 1, 0],
+        duration: 200,
+        direction: 'alternate',
+        loop: true,
+        easing: 'easeInOutSine'
+      });
+
+    } else {
+      // RETURN TO IDLE
+      anime.remove([containerRef.current, bracketsRef.current, coreRef.current, outerRingRef.current, innerRingRef.current]);
+      
+      // Normalize container position/scale
+      anime({
+        targets: containerRef.current,
+        scale: 1,
+        rotate: 0,
+        duration: 400,
+        easing: 'easeOutQuad'
+      });
+
+      anime({
+        targets: coreRef.current,
+        scale: 1,
+        opacity: 0.8,
+        backgroundColor: '#22d3ee',
+        boxShadow: '0 0 8px 1px rgba(34,211,238,0.6)',
+        duration: 500,
+        easing: 'easeOutQuad'
+      });
+
+      anime({
+        targets: [outerRingRef.current, innerRingRef.current],
+        stroke: '#22d3ee',
+        scale: 1,
+        filter: 'drop-shadow(0 0 5px rgba(34,211,238,0.5))',
+        duration: 500,
+        easing: 'easeOutQuad'
+      });
+
+      // Brackets return to outer positions
+      anime({
+        targets: bracketsRef.current.children,
+        translateY: '0px',
+        translateX: '0px',
+        borderColor: '#22d3ee',
+        boxShadow: '0 0 0px rgba(34,211,238,0)',
+        duration: 500,
+        easing: 'easeOutQuad'
+      });
+    }
+  }, [isLocked]);
+
+  return (
+    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
+      <div ref={containerRef} className="relative flex items-center justify-center w-24 h-24">
+        
+        {/* Core Dot */}
+        <div ref={coreRef} className="absolute w-1.5 h-1.5 rounded-full bg-cyan-400 opacity-80" style={{ boxShadow: '0 0 8px 1px rgba(34,211,238,0.6)' }} />
+        
+        {/* Outer Tech Ring */}
+        <svg ref={outerRingRef} viewBox="0 0 100 100" className="absolute w-16 h-16 opacity-70" stroke="#22d3ee" fill="none" strokeWidth="2" strokeDasharray="5 15 20 15">
+          <circle cx="50" cy="50" r="45" />
+          <circle cx="50" cy="50" r="48" strokeWidth="0.5" strokeOpacity="0.5" strokeDasharray="2 4" />
+        </svg>
+
+        {/* Inner Solid Ring */}
+        <svg ref={innerRingRef} viewBox="0 0 100 100" className="absolute w-10 h-10 opacity-70" stroke="#22d3ee" fill="none" strokeWidth="1.5" strokeDasharray="30 10">
+          <circle cx="50" cy="50" r="45" />
+          {/* Inner tick marks */}
+          <path d="M50 0 L50 10 M50 90 L50 100 M0 50 L10 50 M90 50 L100 50" strokeWidth="3" />
+        </svg>
+
+        {/* 4 Corner Brackets that slam inward */}
+        <div ref={bracketsRef} className="absolute inset-0">
+          {/* Top Left */}
+          <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-cyan-400 opacity-60" />
+          {/* Top Right */}
+          <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-cyan-400 opacity-60" />
+          {/* Bottom Left */}
+          <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-cyan-400 opacity-60" />
+          {/* Bottom Right */}
+          <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-cyan-400 opacity-60" />
+        </div>
+
+      </div>
+    </div>
+  );
+};
+

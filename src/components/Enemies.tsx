@@ -158,7 +158,7 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
     const sfPos = storeState.enemies[data.id].position;
     _storePos.set(sfPos[0], sfPos[1], sfPos[2]);
     if (_myPosVec.distanceTo(_storePos) > 10) {
-      rbRef.current.setTranslation(_storePos, true);
+      rbRef.current.setTranslation({ x: _storePos.x, y: _storePos.y, z: _storePos.z }, true);
       rbRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
       return;
     }
@@ -172,7 +172,7 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
       const camPos = camera.position;
       _enemyHeadPos.set(myPos.x, myPos.y + 2.5, myPos.z);
       _toEnemyDir.copy(_enemyHeadPos).sub(camPos).normalize();
-      const losRay = new rapier.Ray(camPos, _toEnemyDir);
+      const losRay = new rapier.Ray({ x: camPos.x, y: camPos.y, z: camPos.z }, { x: _toEnemyDir.x, y: _toEnemyDir.y, z: _toEnemyDir.z });
       const dist = _enemyHeadPos.distanceTo(camPos);
       const losHit = world.castRay(losRay, dist, true, interactionGroups(0, [0]));
       losVisible.current = !losHit || (losHit as any).toi >= dist - 1.0;
@@ -196,7 +196,7 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
       if (updateTactical) {
         _nextPos.copy(_myPosVec).add(_moveDir.multiplyScalar(BOT_SPEED * 0.5));
         _floorRayOrigin.set(_nextPos.x, myPos.y + 0.5, _nextPos.z);
-        const floorHit = world.castRay(new rapier.Ray(_floorRayOrigin, _floorRayDir), 5, true, interactionGroups(1, [0]));
+        const floorHit = world.castRay(new rapier.Ray({ x: _floorRayOrigin.x, y: _floorRayOrigin.y, z: _floorRayOrigin.z }, { x: _floorRayDir.x, y: _floorRayDir.y, z: _floorRayDir.z }), 5, true, interactionGroups(1, [0]));
         isFloorSafe.current = !!floorHit && _nextPos.lengthSq() <= 35*35;
       }
       
@@ -207,7 +207,13 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
       }
       // Random jump / dodge due to evasiveness
       if (updateTactical && data.evasiveness > Math.random() * 5 && myPos.y < 1.0) {
-         rbRef.current.applyImpulse({ x: 0, y: 5 + Math.random()*5, z: 0 }, true);
+         rbRef.current.applyImpulse({ x: 0, y: (5 + Math.random()*5) || 0, z: 0 }, true);
+      }
+      
+      // Telemetry learned jump
+      if (v.wantsToJump && myPos.y < 1.0) {
+         rbRef.current.applyImpulse({ x: 0, y: 7, z: 0 }, true);
+         v.wantsToJump = false;
       }
 
       if (isMaimed) {
@@ -215,10 +221,10 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
         const drag = 20 * delta;
         const newVelX = Math.abs(currentVel.x) > drag ? currentVel.x - Math.sign(currentVel.x)*drag : 0;
         const newVelZ = Math.abs(currentVel.z) > drag ? currentVel.z - Math.sign(currentVel.z)*drag : 0;
-        rbRef.current.setLinvel({ x: newVelX, y: currentVel.y, z: newVelZ }, true);
+        rbRef.current.setLinvel({ x: (newVelX) || 0, y: (currentVel.y) || 0, z: (newVelZ) || 0 }, true);
       } else {
         const linVel = rbRef.current.linvel();
-        rbRef.current.setLinvel({ x: _moveDir.x * BOT_SPEED, y: linVel.y, z: _moveDir.z * BOT_SPEED }, true);
+        rbRef.current.setLinvel({ x: (_moveDir.x * BOT_SPEED) || 0, y: (linVel.y) || 0, z: (_moveDir.z * BOT_SPEED) || 0 }, true);
       }
 
       // Look at logic
@@ -253,7 +259,7 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
              // Tactical Check: If we shove them, will they fall?
              _targetToCenter.set(-targetPos.x, 0, -targetPos.z).normalize();
              _cliffCheckOrigin.copy(targetPos).add(new THREE.Vector3(0, 1, 0)).sub(_targetToCenter.multiplyScalar(5));
-             const cliffFloorRay = world.castRay(new rapier.Ray(_cliffCheckOrigin, _floorRayDir), 5, true, interactionGroups(1, [0]));
+             const cliffFloorRay = world.castRay(new rapier.Ray({ x: _cliffCheckOrigin.x, y: _cliffCheckOrigin.y, z: _cliffCheckOrigin.z }, { x: _floorRayDir.x, y: _floorRayDir.y, z: _floorRayDir.z }), 5, true, interactionGroups(1, [0]));
              actionType = (!cliffFloorRay || Math.random() < 0.1) ? 'push' : 'hook';
              hookState.current.actionType = actionType;
            } else {
@@ -274,8 +280,9 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
            _newPos.copy(_aimOrigin).add(_aimDir.multiplyScalar(1.5));
            
            hookRef.current.setBodyType(rapier.RigidBodyType.Dynamic, true);
-           hookRef.current.setTranslation(_newPos, true);
-           hookRef.current.setLinvel(_aimDir.normalize().multiplyScalar(HOOK_SPEED), true);
+           hookRef.current.setTranslation({ x: _newPos.x, y: _newPos.y, z: _newPos.z }, true);
+           const aimVel = _aimDir.normalize().multiplyScalar(HOOK_SPEED);
+           hookRef.current.setLinvel({ x: (aimVel.x) || 0, y: (aimVel.y) || 0, z: (aimVel.z) || 0 }, true);
         }
       }
     }
@@ -296,7 +303,7 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
 
     if (!isBeingHooked && (extraForceX !== 0 || extraForceY !== 0 || extraForceZ !== 0)) {
       const currentVel = rbRef.current.linvel();
-      rbRef.current.setLinvel({ x: currentVel.x + extraForceX, y: currentVel.y + extraForceY, z: currentVel.z + extraForceZ }, true);
+      rbRef.current.setLinvel({ x: (currentVel.x + extraForceX) || 0, y: (currentVel.y + extraForceY) || 0, z: (currentVel.z + extraForceZ) || 0 }, true);
     }
 
     // --- Animation State ---
@@ -327,7 +334,7 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
       if (hookRef.current.bodyType() !== rapier.RigidBodyType.KinematicPositionBased) {
         hookRef.current.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
       }
-      hookRef.current.setNextKinematicTranslation({ x: 0, y: -1000, z: 0 });
+      hookRef.current.setNextKinematicTranslation({ x: 0, y: (-1000) || 0, z: 0 });
       if (chainInstancedMesh.current) chainInstancedMesh.current.count = 0;
     } 
     else if (hookState.current.status === 'firing') {
@@ -357,7 +364,7 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
           _newPos.copy(_hPos).add(_dir.normalize().multiplyScalar(step));
       }
       
-      hookRef.current.setNextKinematicTranslation({ x: _newPos.x, y: _newPos.y, z: _newPos.z });
+      hookRef.current.setNextKinematicTranslation({ x: (_newPos.x) || 0, y: (_newPos.y) || 0, z: (_newPos.z) || 0 });
 
       if (hookObjRef.current) hookObjRef.current.rotation.y -= delta * 30;
 
@@ -493,7 +500,13 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
                 const eOtherPos = e.other.rigidBody?.translation();
                 _pushForce.set(eOtherPos?.x || 0, eOtherPos?.y || 0, eOtherPos?.z || 0).sub(_myPosVec).normalize().multiplyScalar(40);
                 _pushForce.y = 15;
-                e.other.rigidBody?.applyImpulse(_pushForce, true);
+                const body = e.other.rigidBody;
+                if (body) {
+                   const impulse = { x: _pushForce.x, y: _pushForce.y, z: _pushForce.z };
+                   setTimeout(() => {
+                      body.applyImpulse({ x: impulse.x || 0, y: impulse.y || 0, z: impulse.z || 0 }, true);
+                   }, 0);
+                }
                 useGameStore.getState().spawnEffect('blood_explosion', [eOtherPos?.x || 0, eOtherPos?.y || 0, eOtherPos?.z || 0], '#d946ef');
             } else {
                 hookState.current.attachedTarget = name;

@@ -1,6 +1,7 @@
 import * as YUKA from 'yuka';
 import * as THREE from 'three';
 import { useGameStore } from '../store';
+import { AITelemetryBrain } from './AITelemetryBrain';
 
 // We create a custom Vehicle to hold bot-specific data needed by states
 export class BotEntity extends (YUKA as any).Vehicle {
@@ -24,9 +25,12 @@ export class WanderState extends YUKA.State {
     wander.active = true;
     wander.weight = 1.0;
     bot.steering.add(wander);
+    
+    // Load telemetry data if not already loaded
+    AITelemetryBrain.getInstance().loadTelemetry();
   }
 
-  execute(bot: BotEntity) {
+  execute(bot: BotEntity, time: any, delta: number) {
     const store = useGameStore.getState();
     const me = store.enemies[bot.botId];
     if (!me || me.status === 'dead') return;
@@ -67,6 +71,26 @@ export class WanderState extends YUKA.State {
       // Found target, transition to combat
       bot.stateMachine.changeTo('COMBAT');
     }
+
+    // Apply Telemetry learning
+    const brain = AITelemetryBrain.getInstance();
+    const posThree = new THREE.Vector3(bot.position.x, bot.position.y, bot.position.z);
+    const safetySteering = brain.getSafetySteering(posThree);
+    const attractionSteering = brain.getAttractionSteering(posThree);
+    
+    // Combine steering forces softly
+    const netSteering = safetySteering.clone().add(attractionSteering);
+    
+    if (netSteering.lengthSq() > 0) {
+      // Nudge bot away from danger and towards paths manually via velocity
+      bot.velocity.x += netSteering.x * delta;
+      bot.velocity.z += netSteering.z * delta;
+    }
+    
+    if (brain.shouldJumpNow(posThree)) {
+      // Set an arbitrary flag so the physics component (Enemies.tsx) can apply jump force
+      (bot as any).wantsToJump = true;
+    }
   }
 
   exit(bot: BotEntity) {
@@ -85,9 +109,11 @@ export class CombatState extends YUKA.State {
     // @ts-ignore
     this.seekBehavior.active = true;
     bot.steering.add(this.seekBehavior);
+    
+    AITelemetryBrain.getInstance().loadTelemetry();
   }
 
-  execute(bot: BotEntity) {
+  execute(bot: BotEntity, time: any, delta: number) {
     const store = useGameStore.getState();
     const me = store.enemies[bot.botId];
     if (!me || me.status === 'dead') return;
@@ -143,6 +169,23 @@ export class CombatState extends YUKA.State {
     bot.combatTargetDist = nearestDist;
     // @ts-ignore
     bot.combatTargetId = targetEntityId;
+
+    // Apply Telemetry learning
+    const brain = AITelemetryBrain.getInstance();
+    const posThree = new THREE.Vector3(bot.position.x, bot.position.y, bot.position.z);
+    const safetySteering = brain.getSafetySteering(posThree);
+    const attractionSteering = brain.getAttractionSteering(posThree);
+    
+    // Combine steering forces softly
+    const netSteering = safetySteering.clone().add(attractionSteering);
+    
+    if (netSteering.lengthSq() > 0) {
+      bot.velocity.x += netSteering.x * delta;
+      bot.velocity.z += netSteering.z * delta;
+    }
+    if (brain.shouldJumpNow(posThree)) {
+      (bot as any).wantsToJump = true;
+    }
   }
 
   exit(bot: BotEntity) {

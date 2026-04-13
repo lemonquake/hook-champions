@@ -45,7 +45,7 @@ export default function App() {
       
       {gameState === 'playing' && (
         <KeyboardControls map={keyboardMap}>
-          <Canvas shadows dpr={[1, 1.5]} camera={{ fov: 75 }}>
+          <Canvas shadows="percentage" dpr={[1, 1.5]} camera={{ fov: 75 }}>
             <color attach="background" args={[bgColor]} />
             <fog attach="fog" args={[bgColor, 10, 60]} />
             <GameLoopManager />
@@ -66,7 +66,7 @@ export default function App() {
 
             <Suspense fallback={null}>
               <Environment preset="city" />
-              <Physics gravity={[0, -20, 0]} timeStep="vary">
+              <Physics gravity={[0, -20, 0]}>
                 <Arena />
                 <Enemies />
                 <Peers />

@@ -67,6 +67,7 @@ export const Player: React.FC = () => {
   const pitch = useRef(0);
   const cameraShake = useRef(0);
   const lastBroadcastTime = useRef(0);
+  const lastTargetCheck = useRef(0);
   
   const actionStateRef = useRef<CharacterActionState>('idle');
   const velocityRef = useRef<THREE.Vector3>(new THREE.Vector3());
@@ -159,7 +160,7 @@ export const Player: React.FC = () => {
     const rayOrigin = _raycaster.ray.origin;
     const rayDir = _raycaster.ray.direction;
     
-    const rapierRay = new rapier.Ray(rayOrigin, rayDir);
+    const rapierRay = new rapier.Ray({ x: rayOrigin.x, y: rayOrigin.y, z: rayOrigin.z }, { x: rayDir.x, y: rayDir.y, z: rayDir.z });
     const hit = world.castRay(rapierRay, 300, true, interactionGroups(1, [0, 1]));
     
     let targetPoint;
@@ -224,8 +225,9 @@ export const Player: React.FC = () => {
           if (aimData) {
             const hookSpeed = useGameStore.getState().hookSpeed;
             hookRef.current.setBodyType(rapier.RigidBodyType.Dynamic, true);
-            hookRef.current.setTranslation(aimData.origin, true);
-            hookRef.current.setLinvel(aimData.aimDir.multiplyScalar(hookSpeed), true);
+            hookRef.current.setTranslation({ x: aimData.origin.x, y: aimData.origin.y, z: aimData.origin.z }, true);
+            const aimVel = aimData.aimDir.multiplyScalar(hookSpeed);
+            hookRef.current.setLinvel({ x: (aimVel.x) || 0, y: (aimVel.y) || 0, z: (aimVel.z) || 0 }, true);
           }
         }
       }
@@ -246,8 +248,9 @@ export const Player: React.FC = () => {
           if (aimData) {
             const hookSpeed = useGameStore.getState().hookSpeed;
             pushHookRef.current.setBodyType(rapier.RigidBodyType.Dynamic, true);
-            pushHookRef.current.setTranslation(aimData.origin, true);
-            pushHookRef.current.setLinvel(aimData.aimDir.multiplyScalar(hookSpeed * 1.2), true);
+            pushHookRef.current.setTranslation({ x: aimData.origin.x, y: aimData.origin.y, z: aimData.origin.z }, true);
+            const pAimVel = aimData.aimDir.multiplyScalar(hookSpeed * 1.2);
+            pushHookRef.current.setLinvel({ x: (pAimVel.x) || 0, y: (pAimVel.y) || 0, z: (pAimVel.z) || 0 }, true);
           }
         }
       }
@@ -389,9 +392,9 @@ export const Player: React.FC = () => {
         const drag = isGrounded.current ? 30 * delta : 10 * delta;
         const newVelX = Math.abs(currentVel.x) > drag ? currentVel.x - Math.sign(currentVel.x)*drag : 0;
         const newVelZ = Math.abs(currentVel.z) > drag ? currentVel.z - Math.sign(currentVel.z)*drag : 0;
-        playerRef.current.setLinvel({ x: newVelX + extraForceX, y: newVelocityY, z: newVelZ + extraForceZ }, true);
+        playerRef.current.setLinvel({ x: (newVelX + extraForceX) || 0, y: (newVelocityY) || 0, z: (newVelZ + extraForceZ) || 0 }, true);
       } else {
-        playerRef.current.setLinvel({ x: _moveDir.x + extraForceX, y: newVelocityY, z: _moveDir.z + extraForceZ }, true);
+        playerRef.current.setLinvel({ x: (_moveDir.x + extraForceX) || 0, y: (newVelocityY) || 0, z: (_moveDir.z + extraForceZ) || 0 }, true);
       }
     } else {
       velocityRef.current.set(0, 0, 0);
@@ -428,8 +431,12 @@ export const Player: React.FC = () => {
     // --- Camera Positioning (3rd Person) ---
     const playerPos = playerRef.current.translation();
     
-    // Update store position
-    useGameStore.getState().setStats({ playerPosition: [playerPos.x, playerPos.y, playerPos.z] });
+    // Update store position and velocity
+    const linVel2 = playerRef.current.linvel();
+    useGameStore.getState().setStats({ 
+      playerPosition: [playerPos.x, playerPos.y, playerPos.z],
+      playerVelocity: [linVel2.x, linVel2.y, linVel2.z]
+    });
     
     if (state.clock.elapsedTime - lastBroadcastTime.current > 0.05) { // 20 fps
       lastBroadcastTime.current = state.clock.elapsedTime;
@@ -475,6 +482,25 @@ export const Player: React.FC = () => {
     _lookAtPos.copy(camera.position).add(_lookDir);
     camera.lookAt(_lookAtPos);
 
+    // --- Crosshair Detection ---
+    if (state.clock.elapsedTime - lastTargetCheck.current > 0.05) {
+      lastTargetCheck.current = state.clock.elapsedTime;
+      _raycaster.setFromCamera(_screenCenter, camera);
+      const rapierRay = new rapier.Ray({ x: _raycaster.ray.origin.x, y: _raycaster.ray.origin.y, z: _raycaster.ray.origin.z }, { x: _raycaster.ray.direction.x, y: _raycaster.ray.direction.y, z: _raycaster.ray.direction.z });
+      const hit = world.castRay(rapierRay, maxHookLength, true, interactionGroups(1, [0, 1]));
+      let hasTarget = false;
+      if (hit && hit.collider) {
+        const parent = hit.collider.parent();
+        // Dynamic bodies or kinematic bodies usually imply enemy/player, but ensure it's not our own player body
+        if (parent && parent.bodyType() !== rapier.RigidBodyType.Fixed && parent.handle !== playerRef.current.handle) {
+          hasTarget = true;
+        }
+      }
+      if (storeState.crosshairTargetLock !== hasTarget) {
+        useGameStore.getState().setCrosshairTargetLock(hasTarget);
+      }
+    }
+
     // --- Hook Logic ---
     const hookPos = hookRef.current.translation();
     _pPos.set(myPos.x, myPos.y + 1, myPos.z);
@@ -508,7 +534,7 @@ export const Player: React.FC = () => {
       if (hookRef.current.bodyType() !== rapier.RigidBodyType.KinematicPositionBased) {
         hookRef.current.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
       }
-      hookRef.current.setNextKinematicTranslation({ x: 0, y: -1000, z: 0 });
+      hookRef.current.setNextKinematicTranslation({ x: 0, y: (-1000) || 0, z: 0 });
       if (chainInstancedMesh.current) chainInstancedMesh.current.count = 0;
     } 
     else if (hookState.current.status === 'firing') {
@@ -538,7 +564,7 @@ export const Player: React.FC = () => {
       } else {
         _newPos.copy(_hPos).add(_dir.normalize().multiplyScalar(step));
       }
-      hookRef.current.setNextKinematicTranslation({ x: _newPos.x, y: _newPos.y, z: _newPos.z });
+      hookRef.current.setNextKinematicTranslation({ x: (_newPos.x) || 0, y: (_newPos.y) || 0, z: (_newPos.z) || 0 });
 
       // Spin shuriken reverse
       if (hookTipRef.current) {
@@ -553,7 +579,7 @@ export const Player: React.FC = () => {
           if (enemyBody.bodyType() !== rapier.RigidBodyType.KinematicPositionBased) {
             enemyBody.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
           }
-          enemyBody.setNextKinematicTranslation({ x: newPos.x, y: Math.max(1, newPos.y - 1), z: newPos.z });
+          enemyBody.setNextKinematicTranslation({ x: _newPos.x, y: Math.max(1, _newPos.y - 1), z: _newPos.z });
         }
       }
 
@@ -637,7 +663,7 @@ export const Player: React.FC = () => {
       if (pushHookRef.current.bodyType() !== rapier.RigidBodyType.KinematicPositionBased) {
         pushHookRef.current.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
       }
-      pushHookRef.current.setNextKinematicTranslation({ x: 0, y: -1000, z: 0 });
+      pushHookRef.current.setNextKinematicTranslation({ x: 0, y: (-1000) || 0, z: 0 });
       if (pushChainInstancedMesh.current) pushChainInstancedMesh.current.count = 0;
     } 
     else if (pushHookState.current.status === 'firing') {
@@ -666,7 +692,7 @@ export const Player: React.FC = () => {
       } else {
         _newPos.copy(_phPos).add(_dir.normalize().multiplyScalar(step));
       }
-      pushHookRef.current.setNextKinematicTranslation({ x: _newPos.x, y: _newPos.y, z: _newPos.z });
+      pushHookRef.current.setNextKinematicTranslation({ x: (_newPos.x) || 0, y: (_newPos.y) || 0, z: (_newPos.z) || 0 });
 
       if (pushHookTipRef.current) {
         pushHookTipRef.current.rotation.y += delta * 25;
@@ -1086,10 +1112,12 @@ export const Player: React.FC = () => {
             const pushDir = new THREE.Vector3(ep.x - playerPos.x, 0.3, ep.z - playerPos.z).normalize();
             
             // Restore dynamic body type before applying impulse
-            if (otherBody.bodyType() !== rapier.RigidBodyType.Dynamic) {
-              otherBody.setBodyType(rapier.RigidBodyType.Dynamic, true);
-            }
-            otherBody.setLinvel({ x: pushDir.x * PUSH_FORCE, y: pushDir.y * PUSH_FORCE * 0.5, z: pushDir.z * PUSH_FORCE }, true);
+            setTimeout(() => {
+                if (otherBody.bodyType() !== rapier.RigidBodyType.Dynamic) {
+                  otherBody.setBodyType(rapier.RigidBodyType.Dynamic, true);
+                }
+                otherBody.setLinvel({ x: (pushDir.x * PUSH_FORCE) || 0, y: (pushDir.y * PUSH_FORCE * 0.5) || 0, z: (pushDir.z * PUSH_FORCE) || 0 }, true);
+            }, 0);
             
             if (name) {
               // Apply maim debuff
