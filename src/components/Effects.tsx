@@ -77,7 +77,7 @@ const ImpactEffect: React.FC<ParticleProps> = ({ id, position, color, time, type
   });
 
   return (
-    <instancedMesh ref={meshRef} args={[undefined, mat, particles.length]} castShadow />
+    <instancedMesh ref={meshRef} args={[undefined, mat, particles.length]} castShadow={false} />
   );
 };
 

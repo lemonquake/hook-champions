@@ -1,6 +1,6 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { RigidBody, RapierRigidBody } from '@react-three/rapier';
+import { RigidBody, RapierRigidBody, InstancedRigidBodies } from '@react-three/rapier';
 import { Grid, Float } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore, MapDesign } from '../store';
@@ -251,7 +251,7 @@ const Crossfire = ({ size }: { size: number }) => {
 
       {/* Center Platform (slightly raised) */}
       <RigidBody type="fixed" colliders="cuboid" position={[0, 0, 0]}>
-        <mesh receiveShadow><cylinderGeometry args={[12, 12, 2, 16]} rotation={[0,0,0]} /><meshStandardMaterial color="#0a1930" metalness={0.8} /></mesh>
+        <mesh receiveShadow><cylinderGeometry args={[12, 12, 2, 16]} /><meshStandardMaterial color="#0a1930" metalness={0.8} /></mesh>
       </RigidBody>
 
       {/* Kinetic Turbines underneath bridges */}
@@ -465,10 +465,9 @@ const MapObstacles = ({ mapConfig, teams }: { mapConfig: any, teams: any[] }) =>
         
         if (random() > (1 - density)) {
           obs.push({
-            id: `${x}-${z}`,
             position: [x + (random() - 0.5) * 4, 10, z + (random() - 0.5) * 4] as [number, number, number],
-            scale: 0.8 + random() * 1.5,
-            rotation: random() * Math.PI
+            scale: [3 * (0.8 + random() * 1.5), 3 * (0.8 + random() * 1.5), 3 * (0.8 + random() * 1.5)] as [number, number, number],
+            rotation: [0, random() * Math.PI, 0] as [number, number, number]
           });
         }
       }
@@ -476,47 +475,103 @@ const MapObstacles = ({ mapConfig, teams }: { mapConfig: any, teams: any[] }) =>
     return obs;
   }, [mapConfig, teams, halfSize, density, size, theme]);
 
+  if (obstacles.length === 0) return null;
+
+  const positions = new Float32Array(obstacles.length * 3);
+  const rotations = new Float32Array(obstacles.length * 4);
+  const scales = new Float32Array(obstacles.length * 3);
+
+  obstacles.forEach((obs, i) => {
+    positions[i * 3 + 0] = obs.position[0];
+    positions[i * 3 + 1] = obs.position[1];
+    positions[i * 3 + 2] = obs.position[2];
+
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(obs.rotation[0], obs.rotation[1], obs.rotation[2]));
+    rotations[i * 4 + 0] = q.x;
+    rotations[i * 4 + 1] = q.y;
+    rotations[i * 4 + 2] = q.z;
+    rotations[i * 4 + 3] = q.w;
+
+    scales[i * 3 + 0] = obs.scale[0];
+    scales[i * 3 + 1] = obs.scale[1];
+    scales[i * 3 + 2] = obs.scale[2];
+  });
+
   return (
-    <group>
-      {obstacles.map(obs => (
-        // Dynamic boxes fall and fit on complicated geometry organically
-         <RigidBody key={obs.id} type="dynamic" mass={100} position={obs.position} rotation={[0, obs.rotation, 0]}>
-            <mesh castShadow receiveShadow>
-               <boxGeometry args={[3*obs.scale, 3*obs.scale, 3*obs.scale]} />
-               <meshStandardMaterial color="#64748b" metalness={0.4} roughness={0.8} />
-            </mesh>
-         </RigidBody>
-      ))}
-    </group>
+    <InstancedRigidBodies
+      positions={positions}
+      rotations={rotations}
+      scales={scales}
+      colliders="cuboid"
+    >
+      <instancedMesh args={[undefined, undefined, obstacles.length]} castShadow={false} receiveShadow>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#64748b" metalness={0.4} roughness={0.8} />
+      </instancedMesh>
+    </InstancedRigidBodies>
   );
 };
 
 // ─── Blades Of Death Hazard ─────────────────────────────────────
 const BladesOfDeath = ({ size }: { size: number }) => {
   const bladesRef = useRef<THREE.InstancedMesh>(null);
+  const shaderMatRef = useRef<THREE.MeshStandardMaterial>(null);
   
-  useFrame((state) => {
-    if (bladesRef.current) {
-      // Violent spinning!
-      const time = state.clock.elapsedTime;
-      const count = bladesRef.current.count;
-      const dummy = new THREE.Object3D();
-      let index = 0;
-      for (let x = -size*1.5; x <= size*1.5; x += 15) {
-        for (let z = -size*1.5; z <= size*1.5; z += 15) {
-          dummy.position.set(x, 0, z);
-          // Spin flat on the ground furiously!
-          dummy.rotation.set(0, time * 15 * (index % 2 === 0 ? 1 : -1), 0);
-          
-          // Flatten an icosahedron to make a cruel spiky sawblade
-          dummy.scale.set(8, 0.4, 8);
-          dummy.updateMatrix();
-          if (index < count) {
-            bladesRef.current.setMatrixAt(index++, dummy.matrix);
+  // Custom shader to rotate instances on GPU instead of CPU
+  useEffect(() => {
+    if (shaderMatRef.current) {
+        shaderMatRef.current.onBeforeCompile = (shader) => {
+            shader.uniforms.uTime = { value: 0 };
+            shaderMatRef.current.userData.shader = shader;
+            shader.vertexShader = `
+              uniform float uTime;
+              ${shader.vertexShader}
+            `.replace(
+              `#include <begin_vertex>`,
+              `
+              #include <begin_vertex>
+              // Extract instance pseudo-random rotation direction
+              float dir = mod(instanceMatrix[3][0] + instanceMatrix[3][2], 2.0) > 1.0 ? 1.0 : -1.0;
+              float angle = uTime * 15.0 * dir;
+              
+              // Rotate around Y axis
+              float s = sin(angle);
+              float c = cos(angle);
+              mat3 rotMat = mat3(
+                c, 0.0, s,
+                0.0, 1.0, 0.0,
+                -s, 0.0, c
+              );
+              transformed = rotMat * transformed;
+              `
+            );
+        };
+    }
+  }, []);
+  
+  // Set matrices once
+  useEffect(() => {
+      if (bladesRef.current) {
+          let index = 0;
+          const bladesDummy = new THREE.Object3D();
+          for (let x = -size*1.5; x <= size*1.5; x += 15) {
+            for (let z = -size*1.5; z <= size*1.5; z += 15) {
+              bladesDummy.position.set(x, 0, z);
+              // Store initial scale
+              bladesDummy.scale.set(8, 0.4, 8);
+              bladesDummy.updateMatrix();
+              if (index < bladesRef.current.count) {
+                  bladesRef.current.setMatrixAt(index++, bladesDummy.matrix);
+              }
+            }
           }
-        }
+          bladesRef.current.instanceMatrix.needsUpdate = true;
       }
-      bladesRef.current.instanceMatrix.needsUpdate = true;
+  }, [size]);
+
+  useFrame((state) => {
+    if (shaderMatRef.current && shaderMatRef.current.userData.shader) {
+        shaderMatRef.current.userData.shader.uniforms.uTime.value = state.clock.elapsedTime;
     }
   });
 
@@ -530,10 +585,10 @@ const BladesOfDeath = ({ size }: { size: number }) => {
         </mesh>
       </RigidBody>
       
-      {/* Instanced massive spiky sawblades */}
-      <instancedMesh ref={bladesRef} args={[undefined, undefined, 400]} castShadow receiveShadow>
+      {/* Instanced massive spiky sawblades (CPU independent rotation) */}
+      <instancedMesh ref={bladesRef} args={[undefined, undefined, 400]} castShadow={false} receiveShadow>
         <icosahedronGeometry args={[1, 0]} />
-        <meshStandardMaterial color="#334155" metalness={1} roughness={0.2} emissive="#991b1b" emissiveIntensity={0.5} />
+        <meshStandardMaterial ref={shaderMatRef} color="#334155" metalness={1} roughness={0.2} emissive="#991b1b" emissiveIntensity={0.5} />
       </instancedMesh>
     </group>
   );

@@ -28,6 +28,26 @@ const pushChainPos = new THREE.Vector3();
 const pushChainTangent = new THREE.Vector3();
 const pushChainAxis = new THREE.Vector3();
 
+// Pre-allocated reusable objects for per-frame calculations
+const _raycaster = new THREE.Raycaster();
+const _screenCenter = new THREE.Vector2(0, 0);
+const _moveDir = new THREE.Vector3();
+const _yAxis = new THREE.Vector3(0, 1, 0);
+const _xAxis = new THREE.Vector3(1, 0, 0);
+const _lookDir = new THREE.Vector3();
+const _cameraOffset = new THREE.Vector3();
+const _targetQuat = new THREE.Quaternion();
+const _targetCameraPos = new THREE.Vector3();
+const _lookAtPos = new THREE.Vector3();
+const _aimOrigin = new THREE.Vector3();
+const _aimDir = new THREE.Vector3();
+const _pPos = new THREE.Vector3();
+const _hPos = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+const _newPos = new THREE.Vector3();
+const _inwardDir = new THREE.Vector3();
+const _phPos = new THREE.Vector3();
+
 export const Player: React.FC = () => {
   const playerRef = useRef<RapierRigidBody>(null);
   const hookRef = useRef<RapierRigidBody>(null);
@@ -134,11 +154,10 @@ export const Player: React.FC = () => {
     if (!playerRef.current) return null;
     const playerPos = playerRef.current.translation();
     
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    _raycaster.setFromCamera(_screenCenter, camera);
     
-    const rayOrigin = raycaster.ray.origin;
-    const rayDir = raycaster.ray.direction;
+    const rayOrigin = _raycaster.ray.origin;
+    const rayDir = _raycaster.ray.direction;
     
     const rapierRay = new rapier.Ray(rayOrigin, rayDir);
     const hit = world.castRay(rapierRay, 300, true, interactionGroups(1, [0, 1]));
@@ -150,18 +169,18 @@ export const Player: React.FC = () => {
                      (typeof rawHit.toi === 'function' ? rawHit.toi() : rawHit.toi);
                      
       if (distance !== undefined && !isNaN(distance)) {
-        targetPoint = raycaster.ray.at(distance, new THREE.Vector3());
+        targetPoint = _raycaster.ray.at(distance, new THREE.Vector3());
       } else {
-        targetPoint = raycaster.ray.origin.clone().add(raycaster.ray.direction.multiplyScalar(200));
+        targetPoint = _raycaster.ray.origin.clone().add(_raycaster.ray.direction.multiplyScalar(200));
       }
     } else {
-      targetPoint = raycaster.ray.origin.clone().add(raycaster.ray.direction.multiplyScalar(200));
+      targetPoint = _raycaster.ray.origin.clone().add(_raycaster.ray.direction.multiplyScalar(200));
     }
 
     const visualOrigin = new THREE.Vector3(playerPos.x, playerPos.y + 1.0, playerPos.z);
     let aimDir = targetPoint.clone().sub(visualOrigin).normalize();
     if (aimDir.lengthSq() < 0.1 || isNaN(aimDir.x)) {
-      aimDir = raycaster.ray.direction.clone().normalize();
+      aimDir = _raycaster.ray.direction.clone().normalize();
     }
     const origin = visualOrigin.add(aimDir.clone().multiplyScalar(0.75));
     
@@ -250,8 +269,6 @@ export const Player: React.FC = () => {
   useFrame((state, delta) => {
     if (!playerRef.current || !hookRef.current || !pushHookRef.current) return;
 
-    useGameStore.getState().tickRespawn(delta);
-
     const storeState = useGameStore.getState();
     const { moveSpeed, status, hookSpeed, retractSpeed, maxHookLength } = storeState;
     const playerMaimed = storeState.isMaimed('player');
@@ -269,12 +286,15 @@ export const Player: React.FC = () => {
     }
 
     const myPos = playerRef.current.translation();
-    const myPosVec = new THREE.Vector3(myPos.x, myPos.y, myPos.z);
-    const storePos = new THREE.Vector3(...storeState.playerPosition);
+    _pPos.set(myPos.x, myPos.y, myPos.z);
+    
+    // update storePos without allocating
+    const [sx, sy, sz] = storeState.playerPosition;
+    _newPos.set(sx, sy, sz);
     
     // --- Teleport Check (Respawn) ---
-    if (myPosVec.distanceTo(storePos) > 10) {
-      playerRef.current.setTranslation(storePos, true);
+    if (_pPos.distanceTo(_newPos) > 10) {
+      playerRef.current.setTranslation({ x: _newPos.x, y: _newPos.y, z: _newPos.z }, true);
       playerRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
       hookState.current.status = 'idle';
       hookState.current.attachedEnemy = null;
@@ -284,18 +304,18 @@ export const Player: React.FC = () => {
     
     // --- Player Movement ---
     const { forward, backward, left, right } = getKeys();
-    const moveDir = new THREE.Vector3(
+    _moveDir.set(
       (right ? 1 : 0) - (left ? 1 : 0),
       0,
       (backward ? 1 : 0) - (forward ? 1 : 0)
     ).normalize();
 
     // Apply yaw to movement direction
-    moveDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw.current);
-    moveDir.multiplyScalar(effectiveMoveSpeed);
+    _moveDir.applyAxisAngle(_yAxis, yaw.current);
+    _moveDir.multiplyScalar(effectiveMoveSpeed);
 
     const linVel = playerRef.current.linvel();
-    velocityRef.current.set(moveDir.x, linVel.y, moveDir.z);
+    velocityRef.current.set(_moveDir.x, linVel.y, _moveDir.z);
 
     // --- Ground Check (collision-event based + velocity fallback) ---
     wasGrounded.current = isGrounded.current;
@@ -342,23 +362,23 @@ export const Player: React.FC = () => {
     let extraForceZ = 0;
     
     if (storeState.mapConfig.theme === 'Volcano') {
-      if (myPos.y < -1.0 && status !== 'dead') {
+      if (myPos.y < -1.0) {
         // Lava DOT
         useGameStore.getState().damagePlayer(50 * delta, 'hazard');
       }
     } else {
       // Blades trap
-      if (myPos.y < -12 && status !== 'dead') {
+      if (myPos.y < -12) {
         useGameStore.getState().damagePlayer(9999, 'hazard'); // Instant death
         useGameStore.getState().spawnEffect('blood_explosion', [myPos.x, -12, myPos.z], '#991b1b');
-      } else if (myPos.y < -2 && status !== 'dead' && !isGrounded.current) {
+      } else if (myPos.y < -2 && !isGrounded.current) {
         // "Suck in" vacuum mechanics to ensure they die when they fall
         newVelocityY -= 30 * delta; // Extra brutal gravity pull
         
         // Pull inwards toward center of the blades
-        const inwardDir = new THREE.Vector3(-myPos.x, 0, -myPos.z).normalize();
-        extraForceX = inwardDir.x * 10;
-        extraForceZ = inwardDir.z * 10;
+        _inwardDir.set(-myPos.x, 0, -myPos.z).normalize();
+        extraForceX = _inwardDir.x * 10;
+        extraForceZ = _inwardDir.z * 10;
       }
     }
 
@@ -371,7 +391,7 @@ export const Player: React.FC = () => {
         const newVelZ = Math.abs(currentVel.z) > drag ? currentVel.z - Math.sign(currentVel.z)*drag : 0;
         playerRef.current.setLinvel({ x: newVelX + extraForceX, y: newVelocityY, z: newVelZ + extraForceZ }, true);
       } else {
-        playerRef.current.setLinvel({ x: moveDir.x + extraForceX, y: newVelocityY, z: moveDir.z + extraForceZ }, true);
+        playerRef.current.setLinvel({ x: _moveDir.x + extraForceX, y: newVelocityY, z: _moveDir.z + extraForceZ }, true);
       }
     } else {
       velocityRef.current.set(0, 0, 0);
@@ -395,15 +415,15 @@ export const Player: React.FC = () => {
       actionStateRef.current = 'doubleJump';
     } else if (!isGrounded.current) {
       actionStateRef.current = linVel.y > 0 ? 'jump' : 'fall';
-    } else if (moveDir.lengthSq() > 0.1) {
+    } else if (_moveDir.lengthSq() > 0.1) {
       actionStateRef.current = 'walk';
     } else {
       actionStateRef.current = 'idle';
     }
 
     // Rotate player to face camera yaw
-    const targetQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw.current);
-    playerRef.current.setRotation(targetQuat, true);
+    _targetQuat.setFromAxisAngle(_yAxis, yaw.current);
+    playerRef.current.setRotation(_targetQuat, true);
 
     // --- Camera Positioning (3rd Person) ---
     const playerPos = playerRef.current.translation();
@@ -415,7 +435,7 @@ export const Player: React.FC = () => {
       lastBroadcastTime.current = state.clock.elapsedTime;
       useGameStore.getState().broadcastState({
         position: [playerPos.x, playerPos.y, playerPos.z],
-        rotation: [targetQuat.x, targetQuat.y, targetQuat.z, targetQuat.w],
+        rotation: [_targetQuat.x, _targetQuat.y, _targetQuat.z, _targetQuat.w],
         teamId: playerTeamId,
         status: status,
         hookStatus: hookState.current.status,
@@ -424,17 +444,17 @@ export const Player: React.FC = () => {
     }
     
     // The camera should be offset to the right and back from the player.
-    const cameraOffset = new THREE.Vector3(1.0, 0.5, 3.5); // Right, up, back
-    cameraOffset.applyAxisAngle(new THREE.Vector3(1, 0, 0), pitch.current);
-    cameraOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw.current);
+    _cameraOffset.set(1.0, 0.5, 3.5); // Right, up, back
+    _cameraOffset.applyAxisAngle(_xAxis, pitch.current);
+    _cameraOffset.applyAxisAngle(_yAxis, yaw.current);
     
     // We want the camera to look forward.
-    const lookDir = new THREE.Vector3(0, 0, -1);
-    lookDir.applyAxisAngle(new THREE.Vector3(1, 0, 0), pitch.current);
-    lookDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw.current);
+    _lookDir.set(0, 0, -1);
+    _lookDir.applyAxisAngle(_xAxis, pitch.current);
+    _lookDir.applyAxisAngle(_yAxis, yaw.current);
 
-    const targetCameraPos = new THREE.Vector3(playerPos.x, playerPos.y + 1.5, playerPos.z).add(cameraOffset);
-    camera.position.lerp(targetCameraPos, 0.5);
+    _targetCameraPos.set(playerPos.x, playerPos.y + 1.5, playerPos.z).add(_cameraOffset);
+    camera.position.lerp(_targetCameraPos, 0.5);
     
     // --- Camera Shake & FOV Warp ---
     if (cameraShake.current > 0) {
@@ -452,14 +472,14 @@ export const Player: React.FC = () => {
     }
     camera.updateProjectionMatrix();
 
-    const lookAtPos = camera.position.clone().add(lookDir);
-    camera.lookAt(lookAtPos);
+    _lookAtPos.copy(camera.position).add(_lookDir);
+    camera.lookAt(_lookAtPos);
 
     // --- Hook Logic ---
     const hookPos = hookRef.current.translation();
-    const pPos = new THREE.Vector3(playerPos.x, playerPos.y + 1, playerPos.z);
-    const hPos = new THREE.Vector3(hookPos.x, hookPos.y, hookPos.z);
-    const dist = pPos.distanceTo(hPos);
+    _pPos.set(myPos.x, myPos.y + 1, myPos.z);
+    _hPos.set(hookPos.x, hookPos.y, hookPos.z);
+    const dist = _pPos.distanceTo(_hPos);
 
     // Update UI Store
     const now = performance.now() / 1000;
@@ -509,13 +529,16 @@ export const Player: React.FC = () => {
       }
 
       // Constant-speed retraction — never slowed down by anything
-      const dir = pPos.clone().sub(hPos);
-      const distanceToPlayer = dir.length();
+      _dir.copy(_pPos).sub(_hPos);
+      const distanceToPlayer = _dir.length();
       const step = retractSpeed * delta;
-      const newPos = step >= distanceToPlayer
-        ? pPos.clone()
-        : hPos.clone().add(dir.normalize().multiplyScalar(step));
-      hookRef.current.setNextKinematicTranslation(newPos);
+      
+      if (step >= distanceToPlayer) {
+        _newPos.copy(_pPos);
+      } else {
+        _newPos.copy(_hPos).add(_dir.normalize().multiplyScalar(step));
+      }
+      hookRef.current.setNextKinematicTranslation({ x: _newPos.x, y: _newPos.y, z: _newPos.z });
 
       // Spin shuriken reverse
       if (hookTipRef.current) {
@@ -571,13 +594,13 @@ export const Player: React.FC = () => {
       const numLinks = Math.min(150, Math.floor(dist / linkLength));
       chainInstancedMesh.current.count = numLinks;
       
-      chainMidPoint.addVectors(pPos, hPos).multiplyScalar(0.5);
+      chainMidPoint.addVectors(_pPos, _hPos).multiplyScalar(0.5);
       const droopAmount = hookState.current.status === 'retracting' && hookState.current.attachedEnemy ? 0.2 : Math.min(dist * 0.2, 2.0);
       chainMidPoint.y -= droopAmount;
       
-      chainCurve.v0.copy(pPos);
+      chainCurve.v0.copy(_pPos);
       chainCurve.v1.copy(chainMidPoint);
-      chainCurve.v2.copy(hPos);
+      chainCurve.v2.copy(_hPos);
 
       for (let i = 0; i < numLinks; i++) {
         const t = i / (numLinks - 1 || 1);
@@ -603,8 +626,8 @@ export const Player: React.FC = () => {
     // ═══  PUSH HOOK LOGIC  ═══════════════════════════════
     // ═══════════════════════════════════════════════════════
     const pushHookPos = pushHookRef.current.translation();
-    const phPos = new THREE.Vector3(pushHookPos.x, pushHookPos.y, pushHookPos.z);
-    const pushDist = pPos.distanceTo(phPos);
+    _phPos.set(pushHookPos.x, pushHookPos.y, pushHookPos.z);
+    const pushDist = _pPos.distanceTo(_phPos);
 
     if (pushHookTipRef.current) {
       pushHookTipRef.current.visible = pushHookState.current.status !== 'idle';
@@ -634,13 +657,16 @@ export const Player: React.FC = () => {
         pushHookRef.current.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
       }
 
-      const dir = pPos.clone().sub(phPos);
-      const distanceToPlayer = dir.length();
+      _dir.copy(_pPos).sub(_phPos);
+      const distanceToPlayer = _dir.length();
       const step = retractSpeed * 1.5 * delta;
-      const newPos = step >= distanceToPlayer
-        ? pPos.clone()
-        : phPos.clone().add(dir.normalize().multiplyScalar(step));
-      pushHookRef.current.setNextKinematicTranslation(newPos);
+      
+      if (step >= distanceToPlayer) {
+        _newPos.copy(_pPos);
+      } else {
+        _newPos.copy(_phPos).add(_dir.normalize().multiplyScalar(step));
+      }
+      pushHookRef.current.setNextKinematicTranslation({ x: _newPos.x, y: _newPos.y, z: _newPos.z });
 
       if (pushHookTipRef.current) {
         pushHookTipRef.current.rotation.y += delta * 25;
@@ -659,13 +685,13 @@ export const Player: React.FC = () => {
       const numLinks = Math.min(150, Math.floor(pushDist / linkLength));
       pushChainInstancedMesh.current.count = numLinks;
       
-      pushChainMidPoint.addVectors(pPos, phPos).multiplyScalar(0.5);
+      pushChainMidPoint.addVectors(_pPos, _phPos).multiplyScalar(0.5);
       const droopAmount = pushHookState.current.status === 'retracting' ? 0.1 : Math.min(pushDist * 0.15, 1.5);
       pushChainMidPoint.y -= droopAmount;
       
-      pushChainCurve.v0.copy(pPos);
+      pushChainCurve.v0.copy(_pPos);
       pushChainCurve.v1.copy(pushChainMidPoint);
-      pushChainCurve.v2.copy(phPos);
+      pushChainCurve.v2.copy(_phPos);
 
       for (let i = 0; i < numLinks; i++) {
         const t = i / (numLinks - 1 || 1);
@@ -1029,7 +1055,7 @@ export const Player: React.FC = () => {
       </RigidBody>
 
       {/* Chain Links */}
-      <instancedMesh ref={chainInstancedMesh} args={[chainGeo, chainMat, 150]} castShadow frustumCulled={false} />
+      <instancedMesh ref={chainInstancedMesh} args={[chainGeo, chainMat, 150]} castShadow={false} frustumCulled={false} />
 
       {/* ═══ PUSH HOOK PROJECTILE ═══ */}
       <RigidBody
@@ -1150,7 +1176,7 @@ export const Player: React.FC = () => {
       </RigidBody>
 
       {/* Push Hook Chain Links */}
-      <instancedMesh ref={pushChainInstancedMesh} args={[pushChainGeo, pushChainMat, 150]} castShadow frustumCulled={false} />
+      <instancedMesh ref={pushChainInstancedMesh} args={[pushChainGeo, pushChainMat, 150]} castShadow={false} frustumCulled={false} />
     </>
   );
 };

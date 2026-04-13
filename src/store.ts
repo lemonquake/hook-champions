@@ -15,6 +15,11 @@ export interface EnemyData {
   shotsHit: number;
   status: 'alive' | 'dead';
   respawnTimer: number;
+  points: number;
+  hookTip: HookTipType;
+  chainLink: ChainLinkType;
+  predictionLead: number;
+  evasiveness: number;
 }
 
 export interface PeerData {
@@ -99,15 +104,23 @@ interface GameState {
   lastPushedBy: Record<string, { attackerId: string; time: number }>;
   applyPushCredit: (targetId: string, attackerId: string) => void;
   
-  // Kill feed effects (celebration effects for the killer)
-  killFeedEffects: { id: string; variant: number; victimName: string; time: number }[];
-  spawnKillEffect: (victimName: string) => void;
+  // Kill feed effects (arena-wide kill announcements)
+  killFeedEffects: { id: string; variant: number; victimName: string; killerName: string; method: 'hook' | 'push' | 'hazard' | 'blade'; message: string; time: number }[];
+  spawnArenaKillAnnouncement: (killerName: string, victimName: string, method: 'hook' | 'push' | 'hazard' | 'blade') => void;
   removeKillEffect: (id: string) => void;
   
   // Effects System
   effects: { id: string; type: 'impact' | 'dust' | 'blood_explosion'; position: [number, number, number]; color: string; time: number }[];
   spawnEffect: (type: 'impact' | 'dust' | 'blood_explosion', position: [number, number, number], color: string) => void;
   removeEffect: (id: string) => void;
+
+  // Damage Feedbacks
+  damageFeedbacks: { id: string; amount: number; position: [number, number, number]; isCrit: boolean; time: number; color?: string }[];
+  spawnDamageFeedback: (amount: number, position: [number, number, number], isCrit?: boolean, color?: string) => void;
+  removeDamageFeedback: (id: string) => void;
+
+  // AI Economy
+  botBuyUpgrade: (botId: string) => void;
 }
 
 let socket: PartySocket | null = null;
@@ -151,6 +164,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   lastPushedBy: {},
   killFeedEffects: [],
   effects: [],
+  damageFeedbacks: [],
   
   applyHookPenalty: (entityId) => set((state) => ({
     hookPenalties: { ...state.hookPenalties, [entityId]: performance.now() / 1000 }
@@ -177,14 +191,82 @@ export const useGameStore = create<GameState>((set, get) => ({
     };
   }),
   
-  spawnKillEffect: (victimName) => set((state) => ({
-    killFeedEffects: [...state.killFeedEffects, { 
-      id: Math.random().toString(), 
-      variant: Math.floor(Math.random() * 10), 
-      victimName, 
-      time: performance.now() 
-    }]
-  })),
+  spawnArenaKillAnnouncement: (killerName, victimName, method) => set((state) => {
+    // 40 hilarious context-aware kill messages
+    const hookMessages = [
+      `🪝 ${killerName} RIPPED ${victimName}'s SPINE OUT!! GET REKT!!`,
+      `${killerName} SNATCHED ${victimName} LIKE A DAMN PIÑATA! 🎉`,
+      `${killerName} just hooked ${victimName} in the TAINT! DEVASTATING!!`,
+      `YOINK!! ${killerName} RAGDOLLED ${victimName} into oblivion!`,
+      `Holy SHIT! ${killerName} SNAGGED ${victimName}'s SOUL!! 💀`,
+      `${killerName} sent ${victimName} to THERAPY with that hook!!`,
+      `GET OVER HERE!! ${killerName} SCORPION'D ${victimName}!!`,
+      `🎣 ${killerName} caught a CLOWN FISH named ${victimName}!!`,
+      `${killerName} dragged ${victimName} through HELL... forgot the 'back' part!!`,
+      `REST IN PIECES, ${victimName}! Signed, ${killerName} 💀`,
+    ];
+    const pushMessages = [
+      `DAMN! ${victimName} was OBLITERATED no thanks to that PSYCHO ${killerName}!!`,
+      `🫸 ${killerName} kicked ${victimName} in the BALLS off the edge!! YEET!!`,
+      `${killerName} said 'BYE BITCH!' and LAUNCHED ${victimName} into the shadow realm!!`,
+      `FATALITY!! ${killerName} YEETED ${victimName} off the map like DIRTY LAUNDRY!!`,
+      `${victimName} got SPARTA KICKED by ${killerName}!! THIS. IS. ARENA!!`,
+      `LOL ${killerName} just DELETED ${victimName} from existence!! UNINSTALLED!!`,
+      `✈️ ${victimName}'s FLIGHT to HELL sponsored by ${killerName}!!`,
+      `${killerName} gave ${victimName} a ONE-WAY TICKET to the MEAT GRINDER!!`,
+      `ADIOS, ${victimName}!! ${killerName} said GET THE FUCK OUT!! 🫡`,
+      `PUSHED!! ${victimName} tried to fly BUT FORGOT HOW! Thanks ${killerName}!!`,
+    ];
+    const hazardMessages = [
+      `🩸 ${victimName} got SHREDDED INTO CONFETTI by the blades!! BRUTAL!!`,
+      `RIP ${victimName}!! The blades turned 'em into a SMOOTHIE!! 🥤`,
+      `LMAOOO ${victimName} just WALKED into the blades like a TOTAL DUMBASS!!`,
+      `${victimName}'s last words: 'I wonder what this button do—' *BRRRRRT*!!`,
+      `The BLADES claim another IDIOT!! ${victimName} is now PÂTÉ!! 🍖`,
+    ];
+    const genericMessages = [
+      `💀 ${victimName} just got absolutely DEMOLISHED!! GARBAGE TIER!!`,
+      `SKILL DIFF!! ${killerName} ANNIHILATED ${victimName} with ZERO MERCY!!`,
+      `SEND MEDICS!! Oh wait... ${victimName} is ALREADY PASTE!! 🤮`,
+      `AND THE CROWD GOES WILD!! ${killerName} BODIED ${victimName}!!`,
+      `GG EZ!! ${victimName} got CLAPPED INTO NEXT CENTURY by ${killerName}!!`,
+    ];
+    // Gen Z slang fire 🔥
+    const genZMessages = [
+      `WOHOOOO! ${killerName} just ATE ${victimName} UP!! NO CRUMBS!! 🔥`,
+      `HELL YEAHHH!! ${killerName} is giving MAIN CHARACTER ENERGY rn!!`,
+      `SKRRRRRT!! ${victimName} just got RATIO'D by ${killerName}!! 💀💀`,
+      `This is some TYPESHIT right here!! ${killerName} is UNHINGED!!`,
+      `OUTPLAYED!!!! ${victimName} is actually COOKED beyond recovery!!`,
+      `Lowkey ${killerName} is DOMINATING ${victimName} like some TYPESHIT!! NO CAP!!`,
+      `${victimName} is NOT him. ${killerName} is THE GOAT fr fr 🐐`,
+      `SHEEEESH!! ${killerName} just had ${victimName} CATCHING Ls ALL DAY!! 📉`,
+      `NAH BRO ${victimName} IS COOKED!! ${killerName} said 'sit down' RESPECTFULLY 💅`,
+      `${killerName} went SICKO MODE on ${victimName}!! IT'S GIVING UNALIVE!! ☠️`,
+    ];
+    
+    let pool: string[];
+    switch (method) {
+      case 'hook': pool = [...hookMessages, ...genericMessages, ...genZMessages]; break;
+      case 'push': pool = [...pushMessages, ...genericMessages, ...genZMessages]; break;
+      case 'hazard':
+      case 'blade': pool = [...hazardMessages, ...genericMessages, ...genZMessages]; break;
+      default: pool = [...genericMessages, ...genZMessages];
+    }
+    const message = pool[Math.floor(Math.random() * pool.length)];
+    
+    return {
+      killFeedEffects: [...state.killFeedEffects, {
+        id: Math.random().toString(),
+        variant: Math.floor(Math.random() * 30),
+        victimName,
+        killerName,
+        method,
+        message,
+        time: performance.now()
+      }]
+    };
+  }),
   
   removeKillEffect: (id) => set((state) => ({
     killFeedEffects: state.killFeedEffects.filter(e => e.id !== id)
@@ -196,6 +278,14 @@ export const useGameStore = create<GameState>((set, get) => ({
   
   removeEffect: (id) => set((state) => ({
     effects: state.effects.filter(e => e.id !== id)
+  })),
+
+  spawnDamageFeedback: (amount, position, isCrit = false, color = '#ffffff') => set((state) => ({
+    damageFeedbacks: [...state.damageFeedbacks, { id: Math.random().toString(), amount, position, isCrit, time: performance.now(), color }]
+  })),
+
+  removeDamageFeedback: (id) => set((state) => ({
+    damageFeedbacks: state.damageFeedbacks.filter(d => d.id !== id)
   })),
   
   setStats: (stats) => set((state) => ({ ...state, ...stats })),
@@ -230,21 +320,24 @@ export const useGameStore = create<GameState>((set, get) => ({
         if (state.augments.includes('vampire_protocol') && state.hp < state.maxHp) {
           updates.hp = Math.min(state.maxHp, state.hp + 25);
         }
-        // Spawn kill celebration effect
-        updates.killFeedEffects = [...(state.killFeedEffects || []), {
-          id: Math.random().toString(),
-          variant: Math.floor(Math.random() * 10),
-          victimName: enemy.name,
-          time: performance.now()
-        }];
+        // Spawn arena-wide kill announcement
+        const killMethod = attackerId === 'hazard' ? 'blade' as const : 'hook' as const;
+        setTimeout(() => get().spawnArenaKillAnnouncement(state.playerName, enemy.name, killMethod), 0);
       } else if (state.enemies[effectiveAttacker]) {
+        const killerBot = state.enemies[effectiveAttacker];
         updates.enemies = {
           ...updates.enemies,
           [effectiveAttacker]: {
-            ...state.enemies[effectiveAttacker],
-            kills: state.enemies[effectiveAttacker].kills + 1
+            ...killerBot,
+            kills: killerBot.kills + 1
           }
         };
+        // Bot-vs-bot or bot-vs-enemy kill announcement
+        const killMethod = attackerId === 'hazard' ? 'blade' as const : 'hook' as const;
+        setTimeout(() => get().spawnArenaKillAnnouncement(killerBot.name, enemy.name, killMethod), 0);
+      } else if (attackerId === 'hazard') {
+        // Pure hazard death (no push credit) — environmental kill
+        setTimeout(() => get().spawnArenaKillAnnouncement('The Arena', enemy.name, 'blade'), 0);
       }
       
       // Clean up push credit
@@ -255,10 +348,13 @@ export const useGameStore = create<GameState>((set, get) => ({
       return updates;
     }
     
+    // Spawn damage number
+    get().spawnDamageFeedback(amount, enemy.position, false, state.teams.find(t=>t.id===enemy.teamId)?.color);
+    
     return {
       enemies: {
         ...state.enemies,
-        [id]: { ...enemy, hp: newHp }
+        [id]: { ...enemy, hp: newHp, evasiveness: Math.min(1.0, enemy.evasiveness + 0.1) } // Increase evasiveness when taking damage
       }
     };
   }),
@@ -289,13 +385,20 @@ export const useGameStore = create<GameState>((set, get) => ({
       };
       
       if (effectiveAttacker !== 'player' && effectiveAttacker !== 'hazard' && state.enemies[effectiveAttacker]) {
+        const killerBot = state.enemies[effectiveAttacker];
         updates.enemies = {
           ...state.enemies,
           [effectiveAttacker]: {
-            ...state.enemies[effectiveAttacker],
-            kills: state.enemies[effectiveAttacker].kills + 1
+            ...killerBot,
+            kills: killerBot.kills + 1
           }
         };
+        // Bot killed player — arena announcement
+        const killMethod = attackerId === 'hazard' ? 'blade' as const : 'hook' as const;
+        setTimeout(() => get().spawnArenaKillAnnouncement(killerBot.name, state.playerName, killMethod), 0);
+      } else if (effectiveAttacker === 'hazard' || attackerId === 'hazard') {
+        // Pure hazard death
+        setTimeout(() => get().spawnArenaKillAnnouncement('The Arena', state.playerName, 'blade'), 0);
       }
       
       // Clean up push credit
@@ -305,6 +408,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       
       return updates;
     }
+    get().spawnDamageFeedback(finalDamage, state.playerPosition, false, '#22d3ee');
     return { hp: newHp };
   }),
 
@@ -415,7 +519,12 @@ export const useGameStore = create<GameState>((set, get) => ({
           shotsFired: 0,
           shotsHit: 0,
           status: 'alive',
-          respawnTimer: 0
+          respawnTimer: 0,
+          points: get().mapConfig.startPoints,
+          hookTip: 'shuriken',
+          chainLink: 'torus',
+          predictionLead: 1.0,
+          evasiveness: 0.1
         };
       }
     });
@@ -474,6 +583,37 @@ export const useGameStore = create<GameState>((set, get) => ({
       maxHookLength: 30,
       hp: Math.min(state.hp, 100)
     };
+  }),
+
+  botBuyUpgrade: (botId) => set((state) => {
+    const enemy = state.enemies[botId];
+    if (!enemy || enemy.status === 'dead') return state;
+
+    // VERY primitive bot economy logic (buy random stuff if rich)
+    if (enemy.points > 1000) {
+      if (Math.random() > 0.5) {
+        // Buy random hook tip
+        const tips: HookTipType[] = ['anchor', 'scythe', 'trident', 'harpoon'];
+        const tip = tips[Math.floor(Math.random() * tips.length)];
+        return {
+          enemies: {
+            ...state.enemies,
+            [botId]: { ...enemy, hookTip: tip, points: enemy.points - 500 }
+          }
+        };
+      } else {
+        // Buy random chain link
+        const links: ChainLinkType[] = ['box', 'cylinder', 'ring', 'chainmail', 'dna', 'skull'];
+        const link = links[Math.floor(Math.random() * links.length)];
+        return {
+          enemies: {
+            ...state.enemies,
+            [botId]: { ...enemy, chainLink: link, points: enemy.points - 1000 }
+          }
+        };
+      }
+    }
+    return state;
   }),
 
   initMultiplayer: () => {
