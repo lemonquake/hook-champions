@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import PartySocket from 'partysocket';
+import { AITelemetryBrain } from './ai/AITelemetryBrain';
+import * as THREE from 'three';
 
 export interface EnemyData {
   id: string;
@@ -317,6 +319,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     
     const newHp = enemy.hp - amount;
     if (newHp <= 0) {
+      // AI: Remember where this person died to avoid it
+      AITelemetryBrain.getInstance().reportDanger(new THREE.Vector3(...enemy.position));
+      
       const updates: Partial<GameState> = {
         enemies: {
           ...state.enemies,
@@ -389,6 +394,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
     const newHp = state.hp - finalDamage;
     if (newHp <= 0) {
+      // AI: Remember where this person died to avoid it
+      AITelemetryBrain.getInstance().reportDanger(new THREE.Vector3(...state.playerPosition));
+      
       const updates: Partial<GameState> = {
         hp: 0,
         status: 'dead',

@@ -2,7 +2,7 @@ import React, { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
-export type CharacterActionState = 'idle' | 'walk' | 'jump' | 'doubleJump' | 'fall' | 'land' | 'shoot' | 'hit' | 'hooked' | 'dead';
+export type CharacterActionState = 'idle' | 'walk' | 'jump' | 'doubleJump' | 'fall' | 'land' | 'shoot' | 'hit' | 'hooked' | 'dead' | 'vault1' | 'vault2' | 'vault3';
 
 interface CharacterModelProps {
   actionStateRef: React.MutableRefObject<CharacterActionState>;
@@ -133,6 +133,38 @@ export const CharacterModel: React.FC<CharacterModelProps> = ({
       raRotX = -0.4;
       llRotX = -0.8; // Deep knee bends
       rlRotX = -0.8;
+    } else if (actionState === 'vault1') {
+      // Classic two-handed vault
+      bPosY = 1.6;
+      bRotX = 0.5; // Lean forward over obstacle
+      hRotX = -0.3; // Look ahead
+      laRotX = -0.5; // Arms down holding obstacle
+      raRotX = -0.5;
+      laRotZ = 0.2;
+      raRotZ = -0.2;
+      llRotX = -0.6; // Legs tucked up and swinging forward
+      rlRotX = -0.4;
+    } else if (actionState === 'vault2') {
+      // Parkour speed vault (sideways)
+      bPosY = 1.5;
+      bRotX = 0.8; // Lean way forward
+      bRotY = 0.5; // Turn body sideways
+      hRotX = -0.4;
+      hRotY = -0.5; // Look towards destination
+      laRotX = -1.2; // Left arm plants down
+      raRotX = 1.0;  // Right arm wings up/back for balance
+      raRotZ = -0.8;
+      llRotX = -0.2; // Left leg straightens out sideways
+      rlRotX = -0.6; // Right leg tucked
+    } else if (actionState === 'vault3') {
+      // Front flip vault
+      bPosY = 1.6;
+      laRotX = Math.PI * 0.8; // Tucked arms
+      raRotX = Math.PI * 0.8;
+      llRotX = -0.8; // Tucked legs
+      rlRotX = -0.8;
+      hRotX = 0.6; // Tucked head
+      // body rotation is handled dynamically via continuous delta below
     } else {
       // Walk / Idle
       if (speedFactor > 0.05) {
@@ -167,9 +199,9 @@ export const CharacterModel: React.FC<CharacterModelProps> = ({
     lerpRot(bodyRef.current, bRotX, bRotY, bRotZ, t);
     
     // Front flip override
-    if (actionState === 'doubleJump') {
-      bodyRef.current.rotation.x -= delta * 12; // Fast forward spin
-    } else if (prevAction.current === 'doubleJump') {
+    if (actionState === 'doubleJump' || actionState === 'vault3') {
+      bodyRef.current.rotation.x -= delta * (actionState === 'vault3' ? 15 : 12); // Fast forward spin
+    } else if (prevAction.current === 'doubleJump' || prevAction.current === 'vault3') {
       // Snap to upright to prevent unwinding the full 360 degree Euler angle smoothly back to 0
       bodyRef.current.rotation.x = Math.PI * 2; // Close to nearest full rotation
     }

@@ -15,6 +15,9 @@ export class AITelemetryBrain {
   public traversalNodes: THREE.Vector3[] = [];
   public jumpNodes: THREE.Vector3[] = [];
   
+  // Dynamic memory (hive mind map of recent heavy damage locations)
+  public dynamicDangerZones: { position: THREE.Vector3, timestamp: number }[] = [];
+  
   private isLoaded = false;
 
   private constructor() {}
@@ -67,19 +70,43 @@ export class AITelemetryBrain {
   // Returns a steering impulse vector to avoid danger
   public getSafetySteering(currentPos: THREE.Vector3): THREE.Vector3 {
     const steering = new THREE.Vector3(0, 0, 0);
-    if (!this.isLoaded || this.dangerZones.length === 0) return steering;
+    if (!this.isLoaded || (this.dangerZones.length === 0 && this.dynamicDangerZones.length === 0)) return steering;
 
+    const now = performance.now() / 1000;
+    
+    // Clean up old dynamic danger zones (decay over 15 seconds)
+    this.dynamicDangerZones = this.dynamicDangerZones.filter(d => now - d.timestamp < 15);
+
+    // Static danger zones
     for (const danger of this.dangerZones) {
       const dist = currentPos.distanceTo(danger);
       if (dist < 15) {
-        // Repulsion force inversely proportional to distance
         const repulsion = currentPos.clone().sub(danger).normalize();
         repulsion.multiplyScalar(15 - dist);
-        repulsion.y = 0; // Bound to physics horizontally
+        repulsion.y = 0;
         steering.add(repulsion);
       }
     }
-    return steering.clampLength(0, 20); // Cap the repulsion
+    
+    // Dynamic danger zones (higher repulsive force because they are fresh active threats)
+    for (const danger of this.dynamicDangerZones) {
+      const dist = currentPos.distanceTo(danger.position);
+      if (dist < 20) { // Slightly larger radius for active combat areas
+        const age = now - danger.timestamp;
+        const decayFactor = Math.max(0, 1.0 - (age / 15.0)); // Fades out over 15s
+        const repulsion = currentPos.clone().sub(danger.position).normalize();
+        repulsion.multiplyScalar((20 - dist) * 1.5 * decayFactor); // Stronger multiplier
+        repulsion.y = 0;
+        steering.add(repulsion);
+      }
+    }
+    
+    return steering.clampLength(0, 25); // Cap the repulsion
+  }
+
+  // Report a fresh danger zone (used when taking massive damage or dying)
+  public reportDanger(position: THREE.Vector3) {
+    this.dynamicDangerZones.push({ position: position.clone(), timestamp: performance.now() / 1000 });
   }
 
   // Returns a soft steering impulse vector to attract towards safe recorded paths

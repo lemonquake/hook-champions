@@ -93,6 +93,19 @@ export const Player: React.FC = () => {
     lastFireTime: 0,
   });
 
+  const vaultState = useRef({
+    active: false,
+    progress: 0,
+    startPos: new THREE.Vector3(),
+    controlPos: new THREE.Vector3(),
+    endPos: new THREE.Vector3(),
+    type: 'vault1' as 'vault1' | 'vault2' | 'vault3',
+    duration: 0.6,
+    cooldownStart: 0
+  });
+
+  const vaultCurve = useMemo(() => new THREE.QuadraticBezierCurve3(), []);
+
   const { hookTip, chainLink, playerTeamId } = useGameStore();
 
   const chainGeo = useMemo(() => {
@@ -200,7 +213,7 @@ export const Player: React.FC = () => {
       if (status === 'dead') return;
       
       const now = performance.now() / 1000;
-      const isBeingHooked = playerRef.current && playerRef.current.bodyType() === rapier.RigidBodyType.KinematicPositionBased;
+      const isBeingHooked = playerRef.current && (playerRef.current.bodyType() === rapier.RigidBodyType.KinematicPositionBased || vaultState.current?.active);
       
       // === LEFT CLICK: Regular Hook ===
       if (e.button === 0) {
@@ -341,21 +354,86 @@ export const Player: React.FC = () => {
     if (landingTimer.current > 0) landingTimer.current -= delta;
     if (doubleJumpAnimTimer.current > 0) doubleJumpAnimTimer.current -= delta;
 
-    // --- Jump ---
+    // --- Jump & Vault ---
     const keys = getKeys();
     const jump = (keys as any).jump;
     let newVelocityY = linVel.y;
     const isBeingHooked = playerRef.current.bodyType() === rapier.RigidBodyType.KinematicPositionBased;
 
-    if (jump && !lastJumpPressed.current && !isBeingHooked && !playerMaimed) {
-      if (isGrounded.current) {
-        newVelocityY = 7;
-        isGrounded.current = false;
-        groundContactCount.current = 0; // Force airborne
-      } else if (canDoubleJump.current) {
-        newVelocityY = 5;
-        canDoubleJump.current = false;
-        doubleJumpAnimTimer.current = 0.5;
+    if (vaultState.current.active) {
+      vaultState.current.progress += delta / vaultState.current.duration;
+      if (vaultState.current.progress >= 1.0) {
+        vaultState.current.active = false;
+        vaultState.current.cooldownStart = state.clock.elapsedTime;
+        newVelocityY = 0;
+      } else {
+        vaultCurve.v0.copy(vaultState.current.startPos);
+        vaultCurve.v1.copy(vaultState.current.controlPos);
+        vaultCurve.v2.copy(vaultState.current.endPos);
+        const nextPos = vaultCurve.getPoint(vaultState.current.progress);
+        playerRef.current.setTranslation(nextPos, true);
+        playerRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        velocityRef.current.set(0, 0, 0);
+      }
+    } else if (jump && !lastJumpPressed.current && !isBeingHooked && !playerMaimed) {
+      let vaulted = false;
+      if (forward && state.clock.elapsedTime - vaultState.current.cooldownStart > 0.8) {
+        const forwardDir = new THREE.Vector3(0, 0, -1).applyAxisAngle(_yAxis, yaw.current).normalize();
+        const origin = new THREE.Vector3(myPos.x, myPos.y + 1.0, myPos.z);
+        
+        const fwdRay = new rapier.Ray({ x: origin.x, y: origin.y, z: origin.z }, { x: forwardDir.x, y: forwardDir.y, z: forwardDir.z });
+        // interactionGroups(x, [0]) ensures we ONLY hit the environment (group 0), skipping the player (group 1)
+        const fwdHit = world.castRay(fwdRay, 1.5, true, interactionGroups(5, [0]));
+        
+        if (fwdHit) {
+          const hitX = origin.x + forwardDir.x * fwdHit.toi;
+          const hitZ = origin.z + forwardDir.z * fwdHit.toi;
+          
+          const downOrigin = new THREE.Vector3(hitX + forwardDir.x * 0.5, myPos.y + 3.0, hitZ + forwardDir.z * 0.5);
+          const downRay = new rapier.Ray({ x: downOrigin.x, y: downOrigin.y, z: downOrigin.z }, { x: 0, y: -1, z: 0 });
+          const downHit = world.castRay(downRay, 3.5, true, interactionGroups(5, [0]));
+          
+          if (downHit) {
+            const surfaceY = downOrigin.y - downHit.toi;
+            const heightDiff = surfaceY - myPos.y;
+            
+            if (heightDiff > 0.3 && heightDiff < 2.5) {
+              const checkOrigin = new THREE.Vector3(downOrigin.x, surfaceY + 0.1, downOrigin.z);
+              const upRay = new rapier.Ray({ x: checkOrigin.x, y: checkOrigin.y, z: checkOrigin.z }, { x: 0, y: 1, z: 0 });
+              const upHit = world.castRay(upRay, 1.8, true, interactionGroups(5, [0]));
+              
+              if (!upHit) {
+                vaulted = true;
+                vaultState.current.active = true;
+                vaultState.current.progress = 0;
+                vaultState.current.startPos.copy(myPos);
+                vaultState.current.endPos.set(checkOrigin.x, surfaceY, checkOrigin.z);
+                vaultState.current.controlPos.set(
+                  (myPos.x + checkOrigin.x) / 2,
+                  Math.max(myPos.y + 2.5, surfaceY + 1.0),
+                  (myPos.z + checkOrigin.z) / 2
+                );
+                
+                const rand = Math.random();
+                vaultState.current.type = rand < 0.33 ? 'vault1' : rand < 0.66 ? 'vault2' : 'vault3';
+                vaultState.current.duration = vaultState.current.type === 'vault3' ? 0.8 : 0.5;
+                isGrounded.current = false;
+              }
+            }
+          }
+        }
+      }
+      
+      if (!vaulted) {
+        if (isGrounded.current) {
+          newVelocityY = 7;
+          isGrounded.current = false;
+          groundContactCount.current = 0; // Force airborne
+        } else if (canDoubleJump.current) {
+          newVelocityY = 5;
+          canDoubleJump.current = false;
+          doubleJumpAnimTimer.current = 0.5;
+        }
       }
     }
     lastJumpPressed.current = jump;
@@ -386,7 +464,7 @@ export const Player: React.FC = () => {
     }
 
     // Keep current Y velocity for gravity/falling
-    if (!isBeingHooked) {
+    if (!isBeingHooked && !vaultState.current.active) {
       if (playerMaimed) {
         const currentVel = playerRef.current.linvel();
         const drag = isGrounded.current ? 30 * delta : 10 * delta;
@@ -396,12 +474,14 @@ export const Player: React.FC = () => {
       } else {
         playerRef.current.setLinvel({ x: (_moveDir.x + extraForceX) || 0, y: (newVelocityY) || 0, z: (_moveDir.z + extraForceZ) || 0 }, true);
       }
-    } else {
+    } else if (!vaultState.current.active) {
       velocityRef.current.set(0, 0, 0);
     }
 
     // Update Action State
-    if (isBeingHooked) {
+    if (vaultState.current.active) {
+      actionStateRef.current = vaultState.current.type;
+    } else if (isBeingHooked) {
       actionStateRef.current = 'hooked';
     } else if (hookState.current.status === 'retracting' && hookState.current.attachedEnemy) {
       actionStateRef.current = 'shoot';

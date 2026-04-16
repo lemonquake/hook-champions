@@ -6,10 +6,14 @@ import { AITelemetryBrain } from './AITelemetryBrain';
 // We create a custom Vehicle to hold bot-specific data needed by states
 export class BotEntity extends (YUKA as any).Vehicle {
   botId: string;
+  targetPositionHistory: Map<string, THREE.Vector3> = new Map();
+  targetVelocity: THREE.Vector3 = new THREE.Vector3();
+  strafeDir: number = 1;
   
   constructor(botId: string) {
     super();
     this.botId = botId;
+    this.strafeDir = Math.random() > 0.5 ? 1 : -1;
   }
 }
 
@@ -158,10 +162,32 @@ export class CombatState extends YUKA.State {
       return;
     }
 
-    // Adapt learning: if target is moving fast, apply prediction lead
-    // But since Yuka Seek directly sets target, we can just feed it nearestPos
-    this.seekBehavior.target.set(nearestPos.x, nearestPos.y, nearestPos.z);
+    // Velocity Tracking for Target
+    const prevPos = bot.targetPositionHistory.get(targetEntityId);
+    if (prevPos) {
+       bot.targetVelocity.copy(nearestPos).sub(prevPos).divideScalar(delta || 0.016);
+    }
+    bot.targetPositionHistory.set(targetEntityId, nearestPos.clone());
+
+    // Predictive Seek (aiming ahead instead of directly at them)
+    const predictionTime = Math.min(1.5, nearestDist / 30.0);
+    const predictedPos = nearestPos.clone().add(bot.targetVelocity.clone().multiplyScalar(predictionTime));
     
+    // If they get too close, Seek pushes too hard. Let's maintain a buffer range.
+    if (nearestDist < 12) {
+       this.seekBehavior.target.copy(bot.position); // Stop seeking closer naturally
+    } else {
+       this.seekBehavior.target.copy(predictedPos);
+    }
+    
+    // Orthogonal Strafing (Dodge mechanics)
+    if (Math.random() < 0.02) bot.strafeDir *= -1; // Change direction occasionally
+    const toTarget = nearestPos.clone().sub(bot.position).normalize();
+    const strafeVec = new THREE.Vector3(-toTarget.z, 0, toTarget.x).normalize().multiplyScalar(bot.strafeDir * 20 * delta);
+    
+    // Apply strafe dynamically
+    bot.velocity.add(strafeVec);
+
     // Save target for aiming/hooking inside Enemies.tsx
     // @ts-ignore
     bot.combatTargetPos = nearestPos;

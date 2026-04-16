@@ -1,0 +1,5 @@
+{
+  "name": "hook-champions",
+  "main": "party/server.ts",
+  "compatibilityDate": "2026-04-14"
+}

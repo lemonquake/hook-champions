@@ -192,12 +192,36 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
       
       const isMaimed = useGameStore.getState().isMaimed(data.id);
       
-      // --- CLIFF AVOIDANCE (Safety Check) ---
+      // --- CLIFF AVOIDANCE & FLUID TRAVERSAL (Vaulting / Jumping) ---
       if (updateTactical) {
-        _nextPos.copy(_myPosVec).add(_moveDir.multiplyScalar(BOT_SPEED * 0.5));
+        _nextPos.copy(_myPosVec).add(_moveDir.clone().multiplyScalar(BOT_SPEED * 0.5));
         _floorRayOrigin.set(_nextPos.x, myPos.y + 0.5, _nextPos.z);
         const floorHit = world.castRay(new rapier.Ray({ x: _floorRayOrigin.x, y: _floorRayOrigin.y, z: _floorRayOrigin.z }, { x: _floorRayDir.x, y: _floorRayDir.y, z: _floorRayDir.z }), 5, true, interactionGroups(1, [0]));
         isFloorSafe.current = !!floorHit && _nextPos.lengthSq() <= 35*35;
+
+        // 1. Vault detection (Low obstacle)
+        _aimOrigin.set(myPos.x, myPos.y - 0.2, myPos.z); // Waist height
+        const fwdRay = world.castRay(new rapier.Ray({ x: _aimOrigin.x, y: _aimOrigin.y, z: _aimOrigin.z }, { x: _moveDir.x, y: 0, z: _moveDir.z }), 2.5, true, interactionGroups(1, [0]));
+        if (fwdRay) {
+           // Obstacle ahead! Raycast at head level to see if it's vaultable
+           _aimOrigin.y += 1.5;
+           const highRay = world.castRay(new rapier.Ray({ x: _aimOrigin.x, y: _aimOrigin.y, z: _aimOrigin.z }, { x: _moveDir.x, y: 0, z: _moveDir.z }), 3.0, true, interactionGroups(1, [0]));
+           if (!highRay) {
+               v.wantsToJump = true; // Vault over!
+           } else {
+               isFloorSafe.current = false; // Solid wall, steer away
+           }
+        }
+
+        // 2. Gap Jumping (Platform detection)
+        if (!floorHit) {
+           const gapRayStart = _nextPos.clone().add(_moveDir.clone().multiplyScalar(5));
+           const farFloorHit = world.castRay(new rapier.Ray({ x: gapRayStart.x, y: gapRayStart.y + 0.5, z: gapRayStart.z }, { x: _floorRayDir.x, y: _floorRayDir.y, z: _floorRayDir.z }), 10, true, interactionGroups(1, [0]));
+           if (farFloorHit && gapRayStart.lengthSq() <= 38*38) {
+               v.wantsToJump = true; // Gap is jumpable!
+               isFloorSafe.current = true; // Don't trigger suicide avoidance, just jump
+           }
+        }
       }
       
       if (!isFloorSafe.current) {
@@ -205,14 +229,14 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
          _inward.set(-myPos.x, 0, -myPos.z).normalize();
          _moveDir.lerp(_inward, 0.9).normalize();
       }
-      // Random jump / dodge due to evasiveness
+      // Random dodge due to evasiveness
       if (updateTactical && data.evasiveness > Math.random() * 5 && myPos.y < 1.0) {
-         rbRef.current.applyImpulse({ x: 0, y: (5 + Math.random()*5) || 0, z: 0 }, true);
+         rbRef.current.applyImpulse({ x: 0, y: (5 + Math.random()*5), z: 0 }, true);
       }
       
-      // Telemetry learned jump
+      // Dynamic / Telemetry learned jump
       if (v.wantsToJump && myPos.y < 1.0) {
-         rbRef.current.applyImpulse({ x: 0, y: 7, z: 0 }, true);
+         rbRef.current.applyImpulse({ x: 0, y: 7.5, z: 0 }, true);
          v.wantsToJump = false;
       }
 
@@ -273,11 +297,22 @@ const Bot: React.FC<{ data: EnemyData }> = ({ data }) => {
            
            useGameStore.getState().recordShot(data.id, false);
            
-           // Random fuzziness / accuracy adaptation based on predictionLead
-           const fuzzyFactor = (Math.random() - 0.5) * (2.0 - data.predictionLead);
+           // Advanced Math-Based Predictive Aim Leading
+           const targetVel = (v as any).targetVelocity as THREE.Vector3;
+           const targetVelScaled = targetVel ? targetVel.clone() : new THREE.Vector3(0,0,0);
+           const distToTarget = Math.sqrt((targetPos.x - myPos.x)**2 + (targetPos.z - myPos.z)**2);
+           const timeToHit = distToTarget / HOOK_SPEED;
+           
+           targetVelScaled.multiplyScalar(timeToHit * Math.min(1.0, data.predictionLead));
+           const fuzzyFactor = (Math.random() - 0.5) * (2.0 - data.predictionLead) * 0.5;
+           
            _aimOrigin.set(myPos.x, myPos.y + 1.0, myPos.z);
-           _aimDir.copy(targetPos).add(new THREE.Vector3(fuzzyFactor, 1.0, fuzzyFactor)).sub(_aimOrigin).normalize();
-           _newPos.copy(_aimOrigin).add(_aimDir.multiplyScalar(1.5));
+           _aimDir.copy(targetPos)
+                  .add(targetVelScaled)
+                  .add(new THREE.Vector3(fuzzyFactor, 1.0, fuzzyFactor))
+                  .sub(_aimOrigin).normalize();
+                  
+           _newPos.copy(_aimOrigin).add(_aimDir.clone().multiplyScalar(1.5));
            
            hookRef.current.setBodyType(rapier.RigidBodyType.Dynamic, true);
            hookRef.current.setTranslation({ x: _newPos.x, y: _newPos.y, z: _newPos.z }, true);
